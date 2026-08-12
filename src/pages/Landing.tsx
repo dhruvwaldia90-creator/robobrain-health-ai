@@ -2,6 +2,10 @@ import { Link } from 'react-router-dom'
 import { AGENTS, DISEASE_CATEGORIES } from '@/lib/data'
 import { Icon } from '@/components/Icon'
 
+function scrollToId(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
+}
+
 const PORTALS = [
   {
     role: 'patient',
@@ -49,9 +53,9 @@ export function Landing() {
             </div>
           </div>
           <nav className="hidden items-center gap-7 text-sm font-semibold text-ink-600 md:flex">
-            <a href="#agents" className="hover:text-ink-900">Agents</a>
-            <a href="#portals" className="hover:text-ink-900">Portals</a>
-            <a href="#categories" className="hover:text-ink-900">Disease Atlas</a>
+            <a href="#agents" onClick={(e) => { e.preventDefault(); scrollToId('agents') }} className="hover:text-ink-900">Agents</a>
+            <a href="#portals" onClick={(e) => { e.preventDefault(); scrollToId('portals') }} className="hover:text-ink-900">Portals</a>
+            <a href="#categories" onClick={(e) => { e.preventDefault(); scrollToId('categories') }} className="hover:text-ink-900">Disease Atlas</a>
           </nav>
           <Link to="/login" className="btn-primary">
             Launch Platform <Icon name="ArrowRight" size={16} />
@@ -84,7 +88,7 @@ export function Landing() {
               <Link to="/login" className="btn-primary px-6 py-3 text-base">
                 Explore the dashboards <Icon name="ArrowRight" size={18} />
               </Link>
-              <a href="#agents" className="btn-outline px-6 py-3 text-base">
+              <a href="#agents" onClick={(e) => { e.preventDefault(); scrollToId('agents') }} className="btn-outline px-6 py-3 text-base">
                 <Icon name="Bot" size={18} /> Meet the agents
               </a>
             </div>
