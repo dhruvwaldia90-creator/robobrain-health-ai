@@ -1,6 +1,6 @@
 # 🧠 RoboBrain Health AI
 
-> An **agentic & autonomous** healthcare platform — seven specialized AI agents that analyze symptoms, predict disease risk, audit medications and generate clinician-ready reports across four role-based portals, with a **doctor always in the loop**.
+> An **agentic & autonomous** healthcare platform — eleven specialized AI agents that analyze symptoms, predict disease risk, audit medications, critique their own diagnoses, and generate safety-checked clinician-ready reports across four role-based portals, with a **doctor always in the loop**.
 
 <p align="center">
   <img src="docs/screenshots/landing.png" alt="RoboBrain Health AI landing page" width="100%" />
@@ -25,18 +25,24 @@ Patients upload **symptoms, prescriptions and lab reports** and instantly receiv
 ## 🚀 Key Features
 
 - **Four role-based portals** — Patient, Doctor, Pharmacist, Researcher — each with a tailored dashboard.
-- **Seven autonomous AI agents** with a clean, swappable inference interface.
+- **Eleven specialized AI agents** in a self-critiquing, self-routing mesh with a clean, swappable inference interface.
 - **Role-based authentication** with one-click demo login for every role.
-- **AI report pipeline** — watch the agent mesh run live, then read a clinician-ready report.
-- **Doctor-in-the-loop review** — confirm, modify or escalate every AI assessment.
+- **Streaming AI report pipeline** — watch the agent mesh reason live, then read a safety-checked, consensus report.
+- **Doctor-in-the-loop review** — confirm, modify or escalate every AI assessment; corrections feed a learning loop.
+- **Multimodal input** — voice (Web Speech API) and prescription-photo OCR (tesseract.js) for low-literacy users.
+- **Longitudinal monitoring** — vitals history with risk-trend detection over time.
+- **Public-health intelligence** — autonomous outbreak/anomaly detection across the population dataset.
+- **Digital twin** — what-if intervention simulator projecting risk reduction.
 - **Rich analytics** — radar, area, line, bar and donut charts powered by Recharts.
 - **Seven disease categories** mapped across every finding.
 - **Fully responsive** — works from mobile to widescreen.
-- **Zero backend required** — runs entirely in the browser with `localStorage` persistence.
+- **Works offline** — Local Reasoner mode runs entirely in the browser with `localStorage` persistence; no API key required.
 
 ---
 
 ## 🤖 The Agent Mesh
+
+### Core clinical agents
 
 | Agent | Responsibility |
 |-------|----------------|
@@ -45,10 +51,20 @@ Patients upload **symptoms, prescriptions and lab reports** and instantly receiv
 | 💊 **Drug Intelligence Agent** | Reviews prescriptions for interactions, dosing notes and alternatives. |
 | ⚠️ **ADR Prediction Agent** | Predicts adverse drug reactions and recommends monitoring plans. |
 | ➕ **Doctor Referral Agent** | Routes cases to the right specialty with an urgency level and suggested tests. |
-| 📄 **Report Generation Agent** | Orchestrates the other agents into a single, explainable report with an execution trace. |
+| 📄 **Report Generation Agent** | Orchestrates the other agents into a single, explainable report with a streaming execution trace. |
 | 🔬 **Research Intelligence Agent** | Surfaces cohort trends, biomarkers and signals across the population dataset. |
 
-Every agent implements a common `Agent<Input, Output>` interface. Today they run as **deterministic, explainable inference engines** in the browser (no API keys, no network) — and the same interface can be backed by an LLM or clinical API later.
+### Innovation agents (new)
+
+| Agent | Responsibility |
+|-------|----------------|
+| 🔍 **Critic Agent** | Challenges every diagnosis with counter-evidence, proposes alternatives, and produces an adjusted-confidence consensus. |
+| 🛡️ **Safety / Guardrails Agent** | Red-flag detection, contraindication checks, and approve / warn / block decisions before output. |
+| ❓ **Uncertainty Agent** | Quantifies confidence; can abstain and request additional tests instead of guessing. |
+| 🚦 **Triage Agent** | Autonomous escalation routing — doctor / pharmacist / auto-resolve / emergency — with rationale. |
+| 🔧 **Tool-Use Agent** | Autonomously calls clinical tools (lab lookup, guideline check) and surfaces results. |
+
+Every agent implements a common `Agent<Input, Output>` interface. They run as **deterministic, explainable inference engines** in the browser (no API keys, no network) by default — and the same interface can be backed by an LLM via the provider toggle in the header.
 
 ```ts
 export interface Agent<I, O> {
@@ -71,6 +87,25 @@ export interface Agent<I, O> {
 | **Researcher** | Population incidence trends, biomarker signals, cohort explorer, disease atlas. |
 
 **Disease categories:** Infectious Diseases · Cancer & Oncology · Cardiovascular Disorders · Neurological Disorders · Respiratory Disorders · Metabolic & Endocrine Disorders · Genetic & Rare Disorders.
+
+---
+
+## 💡 Innovations
+
+| # | Innovation | What it does |
+|---|-----------|--------------|
+| 1 | **Critic Agent + consensus debate** | A counter-evidence agent challenges every diagnosis, lowers over-confident scores, and produces an adjusted-confidence consensus. |
+| 2 | **Doctor-feedback learning loop** | Doctor corrections are persisted; the Critic Agent self-adjusts future confidences on corrected conditions. |
+| 3 | **Safety / Guardrails Agent** | Red-flag detection, contraindication checks, and approve / warn / block decisions before any output reaches the user. |
+| 4 | **Uncertainty + abstention** | The mesh quantifies confidence and can abstain ("needs more data") and request additional tests instead of hallucinating. |
+| 5 | **Autonomous triage / escalation routing** | Routes each case to doctor / pharmacist / auto-resolve / emergency with a rationale. |
+| 6 | **Streaming live reasoning trace** | Per-agent reasoning steps stream live during analysis — a transparent "thinking trace." |
+| 7 | **Agentic tool-use** | The agent autonomously calls clinical tools (lab lookup, guideline check) and surfaces results. |
+| 8 | **Multimodal voice + OCR input** | Voice-to-symptom (Web Speech API) and prescription-photo OCR (tesseract.js) for low-literacy users. |
+| 9 | **Longitudinal vitals history** | Record vitals snapshots over time; see BP trends and a derived risk-index chart with trend alerts. |
+| 10 | **Outbreak / anomaly detection** | Autonomous monitoring of case incidence against baselines; flags outbreaks, spikes, and drops in the researcher portal. |
+| 11 | **Digital-twin what-if simulation** | Toggle interventions (quit smoking, control BP / cholesterol / glucose, lose weight) and see projected risk change. |
+| 12 | **LLM integration with graceful fallback** | A serverless LLM endpoint (OpenAI-compatible) with a header toggle between Local Reasoner and LLM Reasoner. Falls back to deterministic local reasoning when no key is configured. |
 
 ---
 
@@ -122,10 +157,22 @@ flowchart TD
 - **React 18** + **TypeScript** (strict)
 - **Vite 5** build tooling
 - **Tailwind CSS 3** for styling
-- **React Router 6** for role-based routing
+- **React Router 6** (HashRouter for GitHub Pages compatibility)
 - **Recharts** for analytics & charts
 - **lucide-react** icons
+- **tesseract.js** for OCR (dynamic import, code-split)
+- **@vercel/node** for the serverless LLM endpoint
 - **ESLint** + `tsc` for quality gates
+
+---
+
+## 🔗 Live Demo
+
+The app is deployed to GitHub Pages — a permanent, public URL with no login wall:
+
+**👉 https://manassawant607-arch.github.io/robobrain-health-ai/**
+
+Use one-click demo login on the sign-in page (any role). The **Local Reasoner** mode runs fully in-browser — no API key required.
 
 ---
 
@@ -194,24 +241,46 @@ src/
 ├── App.tsx                 # Routes + role guards
 ├── context/AuthContext.tsx # Auth state (localStorage session)
 ├── lib/
-│   ├── agents.ts           # The 7 AI agents + report orchestration
-│   ├── data.ts             # Disease categories, demo users, seed cases
-│   ├── research.ts         # Synthetic population dataset
-│   ├── store.ts            # App store (cases, profile)
+│   ├── agents.ts           # 11 AI agents + streaming report orchestration
+│   ├── llm.ts              # LLM client with graceful fallback to local reasoner
+│   ├── learning.ts         # Doctor-feedback learning loop
+│   ├── tools.ts            # Agentic tool-use framework
+│   ├── research.ts         # Population dataset + anomaly/outbreak detection
+│   ├── data.ts             # Disease categories, demo users, seed cases, agent registry
+│   ├── store.ts            # App store (cases, profile, vitals history, learning log)
 │   └── roles.ts, format.ts # Helpers
-├── components/             # Layout, ReportView, charts, UI primitives
+├── components/
+│   ├── Layout.tsx          # Header with LLM toggle + agent count
+│   ├── ReportView.tsx      # Report with Critic/Safety/Uncertainty/Triage/Tool-Use panels
+│   ├── ReasoningTrace.tsx  # Streaming live "thinking trace"
+│   └── ui.tsx              # UI primitives (Card, Badge, ConfidenceBar, etc.)
 └── portals/
-    ├── patient/            # Dashboard, New Submission, Reports, Profile
-    ├── doctor/             # Dashboard, Review Queue, Analytics
-    ├── pharmacist/         # Dashboard, Drug Intelligence, ADR Monitor
-    └── researcher/         # Dashboard, Cohort Explorer, Disease Atlas
+    ├── patient/            # Dashboard, New Submission (voice+OCR), Reports, Profile (digital twin)
+    ├── doctor/             # Dashboard, Review Queue, Analytics (learning loop)
+    ├── pharmacist/         # Dashboard (auto-routed queue), Drug Intelligence, ADR Monitor
+    └── researcher/         # Dashboard (outbreak detection), Cohort Explorer, Disease Atlas
+api/
+└── llm.ts                  # Vercel serverless LLM endpoint (OpenAI-compatible)
+.github/workflows/
+└── deploy.yml              # GitHub Pages auto-deploy on push
 ```
 
 ---
 
-## 🔌 Extending the agents (LLM-ready)
+## 🔌 LLM Integration
 
-Each agent is a pure function behind the `Agent` interface. To plug in a real model, implement an inference provider and swap the agent body — the UI, types and report pipeline stay unchanged. See `src/lib/agents.ts` (`InferenceProvider`, `LOCAL_PROVIDER`).
+The platform supports two reasoning modes, toggled live from the header:
+
+- **Local Reasoner** (default) — deterministic, explainable, runs fully in-browser. No API key, no network. The demo never breaks.
+- **LLM Reasoner** — calls the serverless endpoint (`api/llm.ts`) which proxies to any OpenAI-compatible provider. Configure via env vars:
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `OPENAI_API_KEY` | _(none)_ | API key for the LLM provider. If absent, falls back to local reasoner. |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL for OpenAI-compatible providers. |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Model id. |
+
+To plug in a real model, implement an inference provider and swap the agent body — the UI, types and report pipeline stay unchanged. See `src/lib/agents.ts` (`InferenceProvider`, `LOCAL_PROVIDER`) and `src/lib/llm.ts`.
 
 ---
 
