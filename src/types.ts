@@ -61,7 +61,14 @@ export interface DiseaseCategory {
 
 export type SubmissionType = 'symptoms' | 'prescription' | 'lab'
 
-export type CaseStatus = 'analyzing' | 'ai_complete' | 'doctor_review' | 'reviewed'
+/** Autonomous triage destinations expand where a case can be routed. */
+export type CaseStatus =
+  | 'analyzing'
+  | 'ai_complete'
+  | 'doctor_review'
+  | 'pharmacist_review'
+  | 'auto_resolved'
+  | 'reviewed'
 
 export type Severity = 'low' | 'moderate' | 'high' | 'critical'
 
@@ -141,11 +148,78 @@ export interface ReferralResult {
   recommendedDoctor?: string
 }
 
+/** Critic Agent (#1) — challenges a symptom analysis with counter-evidence. */
+export interface CriticFinding {
+  condition: string
+  challenge: string
+  support: string
+  adjustedConfidence: number
+}
+
+export interface CriticResult {
+  round: number
+  challenges: CriticFinding[]
+  finalConfidences: Record<string, number>
+  summary: string
+}
+
+/** Safety/Guardrails Agent (#3) — vetoes or downgrades unsafe recommendations. */
+export type SafetyAction = 'approve' | 'warn' | 'block'
+
+export interface SafetyCheck {
+  rule: string
+  action: SafetyAction
+  detail: string
+}
+
+export interface SafetyResult {
+  action: SafetyAction
+  reason: string
+  checks: SafetyCheck[]
+  recommendedDowngrade?: Severity
+}
+
+/** Uncertainty + abstention (#4). */
+export interface UncertaintyResult {
+  level: 'low' | 'moderate' | 'high' | 'abstain'
+  abstain: boolean
+  reason: string
+  additionalDataRequested: string[]
+}
+
+/** Autonomous triage (#5). */
+export type TriageDestination = 'doctor' | 'pharmacist' | 'auto' | 'emergency'
+
+export interface TriageResult {
+  destination: TriageDestination
+  rationale: string
+  autonomous: boolean
+}
+
+/** A single reasoning step in the live thinking trace (#6). */
+export interface ReasoningStep {
+  agentId: string
+  agentName: string
+  status: 'pending' | 'running' | 'done'
+  model: string
+  startedAt: string
+  durationMs?: number
+  thought: string
+  outputPreview?: string
+}
+
 export interface AgentRunMeta {
   agent: string
   durationMs: number
   model: string
   startedAt: string
+}
+
+/** Tool-use (#7). */
+export interface ToolCall {
+  tool: string
+  args: Record<string, unknown>
+  result: string
 }
 
 export interface AIReport {
@@ -158,6 +232,11 @@ export interface AIReport {
   drugIntelligence?: DrugIntelligenceResult
   adr?: AdrResult
   referral?: ReferralResult
+  critic?: CriticResult
+  safety?: SafetyResult
+  uncertainty?: UncertaintyResult
+  triage?: TriageResult
+  toolCalls?: ToolCall[]
   confidence: number
   trace: AgentRunMeta[]
 }
@@ -168,6 +247,36 @@ export interface DoctorNote {
   decision: 'agree' | 'modify' | 'escalate'
   note: string
   createdAt: string
+}
+
+/** Doctor-feedback learning (#2) — records an AI/doctor disagreement so weights adapt. */
+export interface LearningEntry {
+  id: string
+  caseId: string
+  condition: string
+  category: DiseaseCategoryId
+  aiConfidence: number
+  decision: DoctorNote['decision']
+  createdAt: string
+}
+
+/** Longitudinal monitoring (#9) — a timestamped vitals snapshot. */
+export interface VitalsSnapshot {
+  takenAt: string
+  vitals: Vitals
+}
+
+/** Autonomous outbreak detection (#10). */
+export interface AnomalySignal {
+  id: string
+  category: DiseaseCategoryId
+  type: 'outbreak' | 'spike' | 'decline'
+  severity: Severity
+  message: string
+  detectedAt: string
+  expected: number
+  observed: number
+  windowCases: number
 }
 
 export interface Case {
@@ -189,3 +298,6 @@ export interface Case {
   report?: AIReport
   doctorNote?: DoctorNote
 }
+
+/** Inference provider identifier — local deterministic engine or an LLM backend. */
+export type ProviderId = 'local' | 'llm'

@@ -5,12 +5,30 @@ import { RiskRadar } from './charts'
 import { Icon } from './Icon'
 import { Card, ConfidenceBar, Pill, SectionTitle, SeverityBadge } from './ui'
 
+const SAFETY_STYLE: Record<string, { bg: string; text: string; label: string }> = {
+  approve: { bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'Approved' },
+  warn: { bg: 'bg-amber-50', text: 'text-amber-700', label: 'Approved with warnings' },
+  block: { bg: 'bg-red-50', text: 'text-red-700', label: 'Blocked' },
+}
+
+const TRIAGE_STYLE: Record<string, { bg: string; text: string; icon: string; label: string }> = {
+  doctor: { bg: 'bg-amber-50', text: 'text-amber-700', icon: 'Stethoscope', label: 'Routed to doctor' },
+  pharmacist: { bg: 'bg-purple-50', text: 'text-purple-700', icon: 'Pill', label: 'Routed to pharmacist' },
+  auto: { bg: 'bg-teal-50', text: 'text-teal-700', icon: 'Bot', label: 'Auto-resolved' },
+  emergency: { bg: 'bg-red-50', text: 'text-red-700', icon: 'Siren', label: 'Escalated to emergency' },
+}
+
 export function ReportView({ report }: { report: AIReport }) {
   const sym = report.symptomAnalysis
   const risk = report.diseaseRisk
   const drug = report.drugIntelligence
   const adr = report.adr
   const ref = report.referral
+  const critic = report.critic
+  const safety = report.safety
+  const uncertainty = report.uncertainty
+  const triage = report.triage
+  const tools = report.toolCalls
 
   return (
     <div className="space-y-5">
@@ -51,6 +69,128 @@ export function ReportView({ report }: { report: AIReport }) {
           ))}
         </div>
       </Card>
+
+      {/* Autonomous routing + safety + uncertainty summary */}
+      {(triage || safety || uncertainty) && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {triage && (
+            <Card>
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-ink-400">
+                <Icon name="Route" size={14} /> Autonomous triage
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <span className={`chip ${TRIAGE_STYLE[triage.destination]?.bg ?? 'bg-ink-100'} ${TRIAGE_STYLE[triage.destination]?.text ?? 'text-ink-700'}`}>
+                  <Icon name={TRIAGE_STYLE[triage.destination]?.icon ?? 'Route'} size={13} />
+                  {TRIAGE_STYLE[triage.destination]?.label ?? triage.destination}
+                </span>
+                {triage.autonomous && (
+                  <span className="chip bg-brand-50 text-brand-700">
+                    <Icon name="Bot" size={13} /> Autonomous
+                  </span>
+                )}
+              </div>
+              <p className="mt-2 text-sm text-ink-600">{triage.rationale}</p>
+            </Card>
+          )}
+          {safety && (
+            <Card>
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-ink-400">
+                <Icon name="ShieldCheck" size={14} /> Safety / guardrails
+              </div>
+              <div className="mt-2">
+                <span className={`chip ${SAFETY_STYLE[safety.action]?.bg ?? 'bg-ink-100'} ${SAFETY_STYLE[safety.action]?.text ?? 'text-ink-700'}`}>
+                  <Icon name={safety.action === 'block' ? 'Ban' : safety.action === 'warn' ? 'TriangleAlert' : 'CircleCheck'} size={13} />
+                  {SAFETY_STYLE[safety.action]?.label ?? safety.action}
+                </span>
+              </div>
+              <p className="mt-2 text-sm text-ink-600">{safety.reason}</p>
+              {safety.checks.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {safety.checks.map((c, i) => (
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-ink-500">
+                      <Icon name="Dot" size={14} className="mt-0.5 text-ink-400" />
+                      {c.rule}: {c.detail}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          )}
+          {uncertainty && (
+            <Card>
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-ink-400">
+                <Icon name="HelpCircle" size={14} /> Uncertainty
+              </div>
+              <div className="mt-2">
+                <span className={`chip ${uncertainty.abstain ? 'bg-red-50 text-red-700' : 'bg-ink-50 text-ink-700'}`}>
+                  <Icon name={uncertainty.abstain ? 'Hand' : 'Gauge'} size={13} />
+                  {uncertainty.abstain ? 'Abstained — needs more data' : `${uncertainty.level} uncertainty`}
+                </span>
+              </div>
+              <p className="mt-2 text-sm text-ink-600">{uncertainty.reason}</p>
+              {uncertainty.additionalDataRequested.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-xs font-semibold text-ink-500">Requesting:</div>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {uncertainty.additionalDataRequested.map((d) => (
+                      <span key={d} className="chip bg-brand-50 text-brand-700">
+                        <Icon name="TestTube" size={12} /> {d}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* Critic agent — counter-evidence */}
+      {critic && critic.challenges.length > 0 && (
+        <Card>
+          <SectionTitle
+            icon="Scale"
+            title="Critic Agent — counter-evidence & consensus"
+            subtitle={critic.summary}
+          />
+          <div className="space-y-2.5">
+            {critic.challenges.map((c) => (
+              <div key={c.condition} className="rounded-xl border border-ink-100 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-ink-800">{c.condition}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-ink-400">adjusted</span>
+                    <span className="font-bold text-ink-900">{c.adjustedConfidence}%</span>
+                  </div>
+                </div>
+                <p className="mt-1 text-sm text-ink-600">{c.challenge}</p>
+                <p className="mt-0.5 text-xs text-ink-400">{c.support}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Tool-use — what the agent chose to call */}
+      {tools && tools.length > 0 && (
+        <Card>
+          <SectionTitle
+            icon="Wrench"
+            title="Tool-Use Agent"
+            subtitle="Clinical tools the agent autonomously chose to gather evidence"
+          />
+          <div className="grid gap-2 sm:grid-cols-2">
+            {tools.map((t) => (
+              <div key={t.tool} className="rounded-xl border border-ink-100 p-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-ink-800">
+                  <Icon name="Wrench" size={14} className="text-brand-500" /> {t.tool}
+                </div>
+                <p className="mt-1 text-xs text-ink-600">{t.result}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-2">
         {/* Symptom analysis */}

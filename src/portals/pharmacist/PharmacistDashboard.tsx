@@ -15,6 +15,8 @@ import {
 export function PharmacistDashboard() {
   const { cases } = useAppState()
   const withMeds = cases.filter((c) => c.medications.length > 0)
+  // Cases autonomously routed to the pharmacist by the triage agent (#5)
+  const pharmacistQueue = cases.filter((c) => c.status === 'pharmacist_review')
 
   const flagged = cases.flatMap((c) =>
     (c.report?.drugIntelligence?.interactions ?? []).map((it) => ({ case: c, it })),
@@ -22,7 +24,6 @@ export function PharmacistDashboard() {
   const highAdr = cases.filter(
     (c) => c.report?.adr?.overallRisk === 'high' || c.report?.adr?.overallRisk === 'critical',
   )
-  const polypharmacy = cases.filter((c) => c.medications.length >= 4)
 
   const interactionSeverity = (['low', 'moderate', 'high', 'critical'] as const).map((s) => ({
     label: s[0].toUpperCase() + s.slice(1),
@@ -42,11 +43,27 @@ export function PharmacistDashboard() {
         </Link>
       </div>
 
+      {pharmacistQueue.length > 0 && (
+        <div className="flex items-center gap-3 rounded-2xl border border-purple-200 bg-purple-50 p-4">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-purple-100 text-purple-700">
+            <Icon name="Route" size={20} />
+          </span>
+          <div className="flex-1">
+            <div className="font-bold text-purple-900">
+              {pharmacistQueue.length} case(s) autonomously routed to you by the triage agent
+            </div>
+            <div className="text-sm text-purple-700">
+              These submissions were detected as medication-safety related and auto-routed here for pharmacist review.
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard icon="ClipboardCheck" label="Regimens reviewed" value={withMeds.length} accent="#a855f7" />
+        <StatCard icon="Route" label="Auto-routed queue" value={pharmacistQueue.length} accent="#7c3aed" />
         <StatCard icon="GitMerge" label="Interactions flagged" value={flagged.length} accent="#f97316" />
         <StatCard icon="AlertTriangle" label="High ADR risk" value={highAdr.length} accent="#ef4444" />
-        <StatCard icon="Layers" label="Polypharmacy" value={polypharmacy.length} accent="#1b81f5" hint="≥4 meds" />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">

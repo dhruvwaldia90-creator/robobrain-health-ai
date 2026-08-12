@@ -91,10 +91,22 @@ export const AGENTS = [
     blurb: 'Parses free-text symptoms into ranked differential diagnoses with confidence scores.',
   },
   {
+    id: 'tools',
+    name: 'Tool-Use Agent',
+    icon: 'Wrench',
+    blurb: 'Selects clinical tools (BMI, qSOFA, polypharmacy…) to gather supporting evidence autonomously.',
+  },
+  {
     id: 'risk',
     name: 'Disease Risk Agent',
     icon: 'ShieldAlert',
     blurb: 'Computes multi-category disease risk from vitals, history and lifestyle signals.',
+  },
+  {
+    id: 'critic',
+    name: 'Critic Agent',
+    icon: 'Scale',
+    blurb: 'Challenges the leading differential with counter-evidence; runs a consensus debate loop.',
   },
   {
     id: 'drug',
@@ -115,6 +127,24 @@ export const AGENTS = [
     blurb: 'Routes cases to the right specialty with an urgency level and suggested tests.',
   },
   {
+    id: 'safety',
+    name: 'Safety / Guardrails Agent',
+    icon: 'ShieldCheck',
+    blurb: 'Audits every output for unsafe recommendations; vetoes or downgrades where required.',
+  },
+  {
+    id: 'uncertainty',
+    name: 'Uncertainty Agent',
+    icon: 'HelpCircle',
+    blurb: 'Estimates confidence and abstains when evidence is too weak, requesting more data.',
+  },
+  {
+    id: 'triage',
+    name: 'Autonomous Triage Agent',
+    icon: 'Route',
+    blurb: 'Decides the case destination autonomously — doctor, pharmacist, auto-resolve or escalate.',
+  },
+  {
     id: 'report',
     name: 'Report Generation Agent',
     icon: 'FileText',
@@ -124,7 +154,7 @@ export const AGENTS = [
     id: 'research',
     name: 'Research Intelligence Agent',
     icon: 'FlaskConical',
-    blurb: 'Surfaces cohort trends, biomarkers and signals across the population dataset.',
+    blurb: 'Surfaces cohort trends, biomarkers and autonomous outbreak signals across the population.',
   },
 ] as const
 
