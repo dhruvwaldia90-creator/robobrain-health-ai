@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main, devin/1781451820-robobrain-health-ai]
+    branches: [main, devin/1781451820-robobrain-health-ai, feature/multi-agent-innovations]
   workflow_dispatch:
 
 permissions:
