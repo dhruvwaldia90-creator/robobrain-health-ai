@@ -88,6 +88,8 @@ export function StatusBadge({ status }: { status: string }) {
     analyzing: 'bg-ink-100 text-ink-600',
     ai_complete: 'bg-brand-50 text-brand-700',
     doctor_review: 'bg-amber-50 text-amber-700',
+    pharmacist_review: 'bg-purple-50 text-purple-700',
+    auto_resolved: 'bg-teal-50 text-teal-700',
     reviewed: 'bg-emerald-50 text-emerald-700',
   }
   return (

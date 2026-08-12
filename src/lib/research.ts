@@ -87,3 +87,102 @@ export const biomarkerSignals = [
   { name: 'CRP ≥ 10 mg/L', category: 'infectious' as DiseaseCategoryId, strength: 64, n: 1240 },
   { name: 'FEV1 < 50% pred.', category: 'respiratory' as DiseaseCategoryId, strength: 59, n: 1980 },
 ]
+
+/**
+ * Autonomous outbreak / anomaly detection (#10).
+ *
+ * Compares recent case incidence per disease category against the synthetic
+ * baseline. A category whose recent incidence exceeds the baseline by a
+ * threshold is surfaced as an outbreak/spike signal; a sharp drop is flagged
+ * as a decline. Fully deterministic — no network needed.
+ */
+export interface AnomalyInput {
+  cases: { primaryCategory: DiseaseCategoryId; createdAt: string }[]
+  now?: number
+  windowDays?: number
+}
+
+const ANOMALY_BASELINE: Record<DiseaseCategoryId, number> = {
+  cardiovascular: 9,
+  metabolic: 8,
+  respiratory: 7,
+  infectious: 6,
+  neurological: 5,
+  oncology: 3,
+  genetic: 1,
+}
+
+export function detectAnomalies(input: AnomalyInput): {
+  id: string
+  category: DiseaseCategoryId
+  type: 'outbreak' | 'spike' | 'decline'
+  severity: 'low' | 'moderate' | 'high' | 'critical'
+  message: string
+  detectedAt: string
+  expected: number
+  observed: number
+  windowCases: number
+}[] {
+  const now = input.now ?? Date.now()
+  const windowDays = input.windowDays ?? 7
+  const since = now - windowDays * 86_400_000
+  const counts: Record<string, number> = {}
+  for (const c of input.cases) {
+    if (+new Date(c.createdAt) >= since) {
+      counts[c.primaryCategory] = (counts[c.primaryCategory] ?? 0) + 1
+    }
+  }
+  const totalWindow = Object.values(counts).reduce((a, b) => a + b, 0)
+
+  const signals = [] as ReturnType<typeof detectAnomalies>
+  for (const [cat, expected] of Object.entries(ANOMALY_BASELINE)) {
+    const observed = counts[cat] ?? 0
+    const ratio = expected > 0 ? observed / expected : 0
+    if (ratio >= 3 && observed >= 3) {
+      signals.push({
+        id: `anom_${cat}_${now}`,
+        category: cat as DiseaseCategoryId,
+        type: 'outbreak',
+        severity: observed >= expected * 4 ? 'critical' : 'high',
+        message: `${categoryShort(cat as DiseaseCategoryId)} incidence ${observed} in ${windowDays}d vs baseline ${expected}/wk — possible outbreak signal.`,
+        detectedAt: new Date(now).toISOString(),
+        expected,
+        observed,
+        windowCases: totalWindow,
+      })
+    } else if (ratio >= 2 && observed >= 2) {
+      signals.push({
+        id: `anom_${cat}_${now}`,
+        category: cat as DiseaseCategoryId,
+        type: 'spike',
+        severity: 'moderate',
+        message: `${categoryShort(cat as DiseaseCategoryId)} incidence rising (${observed} vs baseline ${expected}).`,
+        detectedAt: new Date(now).toISOString(),
+        expected,
+        observed,
+        windowCases: totalWindow,
+      })
+    } else if (expected >= 4 && observed === 0) {
+      signals.push({
+        id: `anom_${cat}_${now}`,
+        category: cat as DiseaseCategoryId,
+        type: 'decline',
+        severity: 'low',
+        message: `${categoryShort(cat as DiseaseCategoryId)} incidence unusually low (0 vs baseline ${expected}).`,
+        detectedAt: new Date(now).toISOString(),
+        expected,
+        observed,
+        windowCases: totalWindow,
+      })
+    }
+  }
+  return signals.sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
+}
+
+function categoryShort(id: DiseaseCategoryId): string {
+  return DISEASE_CATEGORIES.find((c) => c.id === id)?.short ?? id
+}
+
+function severityRank(s: string): number {
+  return { low: 0, moderate: 1, high: 2, critical: 3 }[s] ?? 0
+}

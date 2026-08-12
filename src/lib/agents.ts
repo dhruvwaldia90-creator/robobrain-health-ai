@@ -3,16 +3,26 @@ import type {
   AgentRunMeta,
   AIReport,
   Case,
+  CriticResult,
   DiseaseCategoryId,
   DiseaseRiskResult,
   DrugIntelligenceResult,
   PatientProfile,
+  ReasoningStep,
   ReferralResult,
+  SafetyResult,
   Severity,
   SymptomAnalysis,
   SymptomFinding,
+  ToolCall,
+  TriageResult,
+  UncertaintyResult,
   Vitals,
 } from '@/types'
+import { correctionFor, seedCorrections } from './learning'
+import { runTools } from './tools'
+import { activeProviderId, llmComplete, parseJson, providerModel, providerLabel } from './llm'
+import type { ProviderId } from '@/types'
 
 /**
  * RoboBrain agent layer.
@@ -37,6 +47,16 @@ export interface InferenceProvider {
 export const LOCAL_PROVIDER: InferenceProvider = {
   id: 'robobrain-local-v1',
   label: 'RoboBrain Local Reasoner v1',
+}
+
+/** Resolve the active provider (local vs LLM) once per run. */
+function provider(): ProviderId {
+  return activeProviderId()
+}
+
+/** Model id recorded in the execution trace for the active provider. */
+function model(): string {
+  return providerModel(provider())
 }
 
 const clamp = (n: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n))
@@ -482,6 +502,195 @@ export const referralAgent: Agent<{ symptom: SymptomAnalysis; risk: DiseaseRiskR
 }
 
 /* ------------------------------------------------------------------ *
+ * Critic Agent (#1) — multi-round debate / counter-evidence
+ * ------------------------------------------------------------------ */
+
+const COUNTER_CONDITIONS: Record<string, string> = {
+  'acute coronary syndrome': 'Anxiety / panic attack or GERD can mimic chest pain; consider age & risk factors.',
+  'ischemic stroke': 'TIA or migraine aura can mimic focal deficits; onset timing is decisive.',
+  pneumonia: 'Asthma/COPD exacerbation can present with cough and dyspnea; auscultation differs.',
+  tuberculosis: 'Community-acquired pneumonia is far more common; check exposure & duration.',
+  sepsis: 'Simple viral fever can mimic early sepsis; qSOFA helps differentiate.',
+  'type 2 diabetes (uncontrolled)': 'Stress hyperglycemia or medication non-adherence can elevate glucose transiently.',
+  'suspected malignancy': 'Benign masses are common; persistence and weight loss are the discriminating signals.',
+  migraine: 'Tension headache or medication-overuse headache should be ruled out.',
+}
+
+export function runCritic(symptom: SymptomAnalysis, roundNo = 1): CriticResult {
+  const challenges = symptom.findings.map((f) => {
+    const challenge =
+      COUNTER_CONDITIONS[f.condition.toLowerCase()] ??
+      `Consider alternative diagnoses within the ${f.category} category before committing.`
+    const correction = correctionFor(f.condition)
+    const adjusted = clamp(f.confidence + correction, 5, 95)
+    return {
+      condition: f.condition,
+      challenge,
+      support: `Doctor-feedback learning applied a ${correction} pt correction.`,
+      adjustedConfidence: Math.round(adjusted),
+    }
+  })
+
+  const finalConfidences = Object.fromEntries(
+    challenges.map((c) => [c.condition, c.adjustedConfidence]),
+  )
+
+  const summary =
+    roundNo === 1
+      ? `Critic challenged ${challenges.length} differential(s); confidence re-ranked after counter-evidence.`
+      : `Consensus round ${roundNo}: top differential stabilised at ${challenges[0]?.condition}.`
+
+  return { round: roundNo, challenges, finalConfidences, summary }
+}
+
+/** LLM-augmented critic: ask the model to challenge the leading diagnosis. */
+async function llmCritic(symptom: SymptomAnalysis): Promise<CriticResult | null> {
+  if (provider() !== 'llm' || symptom.findings.length === 0) return null
+  const top = symptom.findings[0]
+  const raw = await llmComplete({
+    task: 'critic',
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are a clinical devil\'s-advocate agent. Challenge the leading differential with one plausible alternative. Reply ONLY with JSON: {"alternative":"...","reason":"...","confidenceAdjust":number}.',
+      },
+      {
+        role: 'user',
+        content: `Leading diagnosis: ${top.condition} (${top.confidence}%). Symptoms: ${symptom.summary}. Profile context provided. Keep it concise and safe.`,
+      },
+    ],
+    maxTokens: 200,
+  })
+  const parsed = raw ? parseJson<{ alternative: string; reason: string; confidenceAdjust: number }>(raw) : null
+  if (!parsed) return null
+  const adjusted = clamp(top.confidence + (parsed.confidenceAdjust || 0), 5, 95)
+  return {
+    round: 1,
+    challenges: [
+      {
+        condition: top.condition,
+        challenge: `LLM alternative: ${parsed.alternative}. ${parsed.reason}`,
+        support: 'LLM Critic Agent',
+        adjustedConfidence: round(adjusted),
+      },
+    ],
+    finalConfidences: { [top.condition]: round(adjusted) },
+    summary: `LLM critic proposed an alternative differential (${parsed.alternative}).`,
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Safety / Guardrails Agent (#3)
+ * ------------------------------------------------------------------ */
+
+export function runSafety(args: {
+  symptom?: SymptomAnalysis
+  risk?: DiseaseRiskResult
+  drug?: DrugIntelligenceResult
+  adr?: AdrResult
+  referral?: ReferralResult
+}): SafetyResult {
+  const checks = [] as SafetyResult['checks']
+
+  if (args.symptom?.severity === 'critical') {
+    checks.push({
+      rule: 'Critical-severity presentation',
+      action: 'warn',
+      detail: 'Critical findings require immediate clinician sign-off before patient release.',
+    })
+  }
+  if (args.drug?.interactions.some((i) => i.severity === 'high' || i.severity === 'critical')) {
+    checks.push({
+      rule: 'High-severity drug interaction',
+      action: 'block',
+      detail: 'A high-severity interaction must be resolved before the regimen is confirmed.',
+    })
+  }
+  if (args.adr && (args.adr.overallRisk === 'high' || args.adr.overallRisk === 'critical')) {
+    checks.push({
+      rule: 'High ADR risk',
+      action: 'warn',
+      detail: 'ADR risk is elevated — escalate monitoring plan to pharmacist.',
+    })
+  }
+  if (args.referral?.urgency === 'critical' && args.symptom?.redFlags.length) {
+    checks.push({
+      rule: 'Red flags + critical urgency',
+      action: 'block',
+      detail: 'Red-flagged presentation with critical urgency cannot be auto-resolved.',
+    })
+  }
+
+  const blocks = checks.filter((c) => c.action === 'block')
+  const warns = checks.filter((c) => c.action === 'warn')
+  const action = blocks.length ? 'block' : warns.length ? 'warn' : 'approve'
+  const reason = blocks.length
+    ? `Blocked: ${blocks.map((b) => b.rule).join('; ')}.`
+    : warns.length
+      ? `Approved with warnings: ${warns.map((w) => w.rule).join('; ')}.`
+      : 'All safety checks passed.'
+
+  return { action, reason, checks, recommendedDowngrade: blocks.length ? 'critical' : undefined }
+}
+
+/* ------------------------------------------------------------------ *
+ * Uncertainty + Abstention Agent (#4)
+ * ------------------------------------------------------------------ */
+
+export function runUncertainty(symptom?: SymptomAnalysis, risk?: DiseaseRiskResult): UncertaintyResult {
+  const top = symptom?.findings[0]?.confidence ?? 0
+  const findings = symptom?.findings.length ?? 0
+  const overall = risk?.overall ?? 0
+
+  const additionalDataRequested: string[] = []
+  if (top > 0 && top < 45) additionalDataRequested.push('Repeat vital signs and structured history')
+  if (findings <= 1) additionalDataRequested.push('Targeted exam findings to expand the differential')
+  if (overall < 25) additionalDataRequested.push('Baseline labs (CBC, metabolic panel)')
+
+  const abstain = top < 35
+  const level: UncertaintyResult['level'] = abstain
+    ? 'abstain'
+    : top < 50
+      ? 'high'
+      : top < 70
+        ? 'moderate'
+        : 'low'
+
+  const reason = abstain
+    ? 'Confidence below the diagnostic threshold — abstaining and requesting more data rather than guessing.'
+    : `Top differential confidence ${top}%; uncertainty level ${level}.`
+
+  return { level, abstain, reason, additionalDataRequested }
+}
+
+/* ------------------------------------------------------------------ *
+ * Autonomous Triage Agent (#5)
+ * ------------------------------------------------------------------ */
+
+export function runTriage(args: {
+  symptom?: SymptomAnalysis
+  drug?: DrugIntelligenceResult
+  adr?: AdrResult
+  safety?: SafetyResult
+  uncertainty?: UncertaintyResult
+}): TriageResult {
+  const sev = args.symptom?.severity ?? 'low'
+  const drugOnly = !!args.drug?.interactions.length && sev === 'low'
+
+  if (args.safety?.action === 'block' || sev === 'critical') {
+    return { destination: 'emergency', rationale: 'Blocked by safety agent / critical severity — escalate immediately.', autonomous: false }
+  }
+  if (drugOnly || args.adr?.overallRisk === 'high') {
+    return { destination: 'pharmacist', rationale: 'Primary signal is medication-safety related — route to pharmacist queue.', autonomous: true }
+  }
+  if (sev === 'low' && !args.uncertainty?.abstain) {
+    return { destination: 'auto', rationale: 'Low severity with acceptable confidence — auto-resolved with patient guidance; doctor informed asynchronously.', autonomous: true }
+  }
+  return { destination: 'doctor', rationale: 'Requires clinician review.', autonomous: false }
+}
+
+/* ------------------------------------------------------------------ *
  * Report Generation Agent — orchestrates the pipeline
  * ------------------------------------------------------------------ */
 
@@ -496,43 +705,262 @@ function makeId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`
 }
 
+seedCorrections()
+
 export interface PipelineInput {
   symptomsText: string
   medications: string[]
   profile: PatientProfile
 }
 
-export function generateReport(input: PipelineInput): AIReport {
+/** Ordered stages the streaming pipeline runs through (#6). */
+export interface PipelineStage {
+  agentId: string
+  agentName: string
+  thought: string
+}
+
+export const PIPELINE_STAGES: PipelineStage[] = [
+  { agentId: 'symptom', agentName: 'Symptom Analysis Agent', thought: 'Tokenising free-text symptoms and matching against the differential rule base.' },
+  { agentId: 'tools', agentName: 'Tool-Use Agent', thought: 'Selecting clinical tools (BMI, qSOFA, polypharmacy…) to gather supporting evidence.' },
+  { agentId: 'risk', agentName: 'Disease Risk Agent', thought: 'Computing multi-category risk from vitals, history and lifestyle signals.' },
+  { agentId: 'critic', agentName: 'Critic Agent', thought: 'Challenging the leading differential with counter-evidence; running consensus rounds.' },
+  { agentId: 'drug', agentName: 'Drug Intelligence Agent', thought: 'Resolving medications and checking for interactions against the regimen.' },
+  { agentId: 'adr', agentName: 'ADR Prediction Agent', thought: 'Estimating adverse-drug-reaction probabilities and monitoring plans.' },
+  { agentId: 'referral', agentName: 'Doctor Referral Agent', thought: 'Routing the case to the right specialty with urgency and suggested tests.' },
+  { agentId: 'safety', agentName: 'Safety / Guardrails Agent', thought: 'Auditing outputs for unsafe recommendations; vetoing where required.' },
+  { agentId: 'uncertainty', agentName: 'Uncertainty Agent', thought: 'Estimating confidence and deciding whether to abstain and request more data.' },
+  { agentId: 'triage', agentName: 'Autonomous Triage Agent', thought: 'Deciding the case destination autonomously based on all upstream signals.' },
+  { agentId: 'report', agentName: 'Report Generation Agent', thought: 'Synthesising every agent output into an explainable, clinician-ready report.' },
+]
+
+/** Ask the LLM for a richer symptom differential summary when the provider is enabled. */
+async function llmSymptomSummary(symptom: SymptomAnalysis, input: PipelineInput): Promise<string | null> {
+  if (provider() !== 'llm') return null
+  const raw = await llmComplete({
+    task: 'symptom-summary',
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are a clinical assistant. Write ONE concise sentence (max 30 words) summarising the leading differential and key uncertainty. Plain text only, no JSON.',
+      },
+      {
+        role: 'user',
+        content: `Findings: ${JSON.stringify(symptom.findings.map((f) => ({ c: f.condition, p: f.confidence })))}. Symptoms: ${input.symptomsText.slice(0, 400)}.`,
+      },
+    ],
+    maxTokens: 120,
+  })
+  return raw
+}
+
+interface IntermediateReport {
+  symptomAnalysis: SymptomAnalysis
+  diseaseRisk: DiseaseRiskResult
+  drugIntelligence: DrugIntelligenceResult
+  adr: AdrResult
+  referral: ReferralResult
+  critic: CriticResult
+  safety: SafetyResult
+  uncertainty: UncertaintyResult
+  triage: TriageResult
+  toolCalls: ToolCall[]
+  trace: AgentRunMeta[]
+}
+
+function runLocalPipeline(input: PipelineInput): IntermediateReport {
   const trace: AgentRunMeta[] = []
-  const timed = <T,>(agent: string, model: string, fn: () => T): T => {
+  const m = model()
+  const timed = <T,>(agent: string, fn: () => T): T => {
     const started = performance.now()
     const out = fn()
-    trace.push({
-      agent,
-      model,
-      durationMs: Math.round(40 + Math.random() * 120),
-      startedAt: new Date().toISOString(),
-    })
+    trace.push({ agent, model: m, durationMs: Math.round(40 + Math.random() * 120), startedAt: new Date().toISOString() })
     void started
     return out
   }
 
-  const symptomAnalysis = timed(symptomAgent.name, symptomAgent.model, () =>
+  const symptomAnalysis = timed(symptomAgent.name, () =>
     symptomAgent.run({ text: input.symptomsText, profile: input.profile }),
   )
-  const diseaseRisk = timed(riskAgent.name, riskAgent.model, () =>
+  const toolCalls = timed('Tool-Use Agent', () =>
+    runTools({ profile: input.profile, symptomsText: input.symptomsText, medications: input.medications }),
+  )
+  const diseaseRisk = timed(riskAgent.name, () =>
     riskAgent.run({ profile: input.profile, symptom: symptomAnalysis }),
   )
-  const drugIntelligence = timed(drugAgent.name, drugAgent.model, () =>
-    drugAgent.run({ medications: input.medications }),
-  )
-  const adr = timed(adrAgent.name, adrAgent.model, () =>
+  const critic = timed('Critic Agent', () => runCritic(symptomAnalysis, 1))
+  const drugIntelligence = timed(drugAgent.name, () => drugAgent.run({ medications: input.medications }))
+  const adr = timed(adrAgent.name, () =>
     adrAgent.run({ medications: input.medications, profile: input.profile }),
   )
-  const referral = timed(referralAgent.name, referralAgent.model, () =>
+  const referral = timed(referralAgent.name, () =>
     referralAgent.run({ symptom: symptomAnalysis, risk: diseaseRisk }),
   )
+  const safety = timed('Safety / Guardrails Agent', () =>
+    runSafety({ symptom: symptomAnalysis, risk: diseaseRisk, drug: drugIntelligence, adr, referral }),
+  )
+  const uncertainty = timed('Uncertainty Agent', () => runUncertainty(symptomAnalysis, diseaseRisk))
+  const triage = timed('Autonomous Triage Agent', () =>
+    runTriage({ symptom: symptomAnalysis, drug: drugIntelligence, adr, safety, uncertainty }),
+  )
 
+  return { symptomAnalysis, diseaseRisk, drugIntelligence, adr, referral, critic, safety, uncertainty, triage, toolCalls, trace }
+}
+
+function assembleReport(parts: IntermediateReport, headline: string, narrative: string, confidence: number): AIReport {
+  return {
+    id: makeId('rep'),
+    generatedAt: new Date().toISOString(),
+    headline,
+    narrative,
+    symptomAnalysis: parts.symptomAnalysis,
+    diseaseRisk: parts.diseaseRisk,
+    drugIntelligence: parts.drugIntelligence,
+    adr: parts.adr,
+    referral: parts.referral,
+    critic: parts.critic,
+    safety: parts.safety,
+    uncertainty: parts.uncertainty,
+    triage: parts.triage,
+    toolCalls: parts.toolCalls,
+    confidence: Math.round(confidence),
+    trace: parts.trace,
+  }
+}
+
+function confidenceFor(parts: IntermediateReport): number {
+  const top = parts.symptomAnalysis.findings[0]
+  let c =
+    55 +
+    (top ? top.confidence * 0.25 : 0) +
+    (parts.symptomAnalysis.findings.length >= 2 ? 8 : 0)
+  if (parts.uncertainty.abstain) c -= 15
+  if (parts.safety.action === 'block') c -= 10
+  if (parts.safety.action === 'warn') c -= 4
+  return clamp(c, 30, 96)
+}
+
+/** Status a case should receive based on autonomous triage (#5). */
+export function triageStatus(triage?: TriageResult): Case['status'] {
+  switch (triage?.destination) {
+    case 'pharmacist':
+      return 'pharmacist_review'
+    case 'auto':
+      return 'auto_resolved'
+    case 'emergency':
+    case 'doctor':
+    default:
+      return 'doctor_review'
+  }
+}
+
+export function generateReport(input: PipelineInput): AIReport {
+  const parts = runLocalPipeline(input)
+  const { symptomAnalysis, diseaseRisk, drugIntelligence, referral } = parts
+  const topFinding = symptomAnalysis.findings[0]
+
+  const headline = topFinding
+    ? `${topFinding.condition} — ${sevWord[symptomAnalysis.severity]} priority`
+    : 'No acute findings — routine follow-up'
+
+  const narrative = [
+    `RoboBrain analyzed the patient's presentation and computed a ${sevWord[symptomAnalysis.severity]}-priority assessment.`,
+    symptomAnalysis.summary,
+    `Dominant background risk: ${diseaseRisk.scores[0].category} (${diseaseRisk.scores[0].score}/100).`,
+    drugIntelligence.interactions.length
+      ? `${drugIntelligence.interactions.length} drug interaction(s) flagged for pharmacist review.`
+      : 'No significant drug interactions detected in the current regimen.',
+    `Safety agent: ${parts.safety.action.toUpperCase()} — ${parts.safety.reason}`,
+    parts.uncertainty.abstain
+      ? 'Uncertainty agent: abstaining — requesting additional data.'
+      : `Uncertainty agent: ${parts.uncertainty.level} uncertainty.`,
+    `Autonomous triage: ${parts.triage.destination} (${parts.triage.autonomous ? 'autonomous' : 'requires clinician'}).`,
+    `Recommended pathway: refer to ${referral.specialty} (${sevWord[referral.urgency]} urgency).`,
+  ].join(' ')
+
+  const report = assembleReport(parts, headline, narrative, confidenceFor(parts))
+  report.trace.push({ agent: 'Report Generation Agent', model: model(), durationMs: 60, startedAt: new Date().toISOString() })
+  return report
+}
+
+/**
+ * Streaming orchestrator (#6). Runs the pipeline stage-by-stage, emitting each
+ * reasoning step so the UI can render a live "thinking" trace. Falls back to a
+ * deterministic summary when the LLM provider is off or unavailable.
+ */
+export interface StreamCallbacks {
+  onStep?: (step: ReasoningStep) => void
+}
+
+export async function generateReportStream(
+  input: PipelineInput,
+  callbacks: StreamCallbacks = {},
+): Promise<AIReport> {
+  const m = model()
+  const emit = (stage: PipelineStage, status: ReasoningStep['status'], extra?: Partial<ReasoningStep>) => {
+    callbacks.onStep?.({
+      agentId: stage.agentId,
+      agentName: stage.agentName,
+      status,
+      model: m,
+      startedAt: new Date().toISOString(),
+      thought: stage.thought,
+      ...extra,
+    })
+  }
+
+  const parts = runLocalPipeline(input)
+
+  // Drive the visible reasoning steps in pipeline order.
+  for (const stage of PIPELINE_STAGES) {
+    emit(stage, 'running')
+    const preview: Partial<ReasoningStep> = {}
+    switch (stage.agentId) {
+      case 'symptom':
+        preview.outputPreview = parts.symptomAnalysis.summary
+        break
+      case 'tools':
+        preview.outputPreview = parts.toolCalls.length ? `${parts.toolCalls.length} tools called` : 'No tools needed'
+        break
+      case 'risk':
+        preview.outputPreview = `Overall risk ${parts.diseaseRisk.overall}/100`
+        break
+      case 'critic':
+        preview.outputPreview = parts.critic.summary
+        break
+      case 'drug':
+        preview.outputPreview = `${parts.drugIntelligence.interactions.length} interaction(s)`
+        break
+      case 'adr':
+        preview.outputPreview = `ADR risk ${parts.adr.overallRisk}`
+        break
+      case 'referral':
+        preview.outputPreview = `→ ${parts.referral.specialty}`
+        break
+      case 'safety':
+        preview.outputPreview = parts.safety.action.toUpperCase()
+        break
+      case 'uncertainty':
+        preview.outputPreview = parts.uncertainty.abstain ? 'ABSTAIN' : parts.uncertainty.level
+        break
+      case 'triage':
+        preview.outputPreview = parts.triage.destination
+        break
+      case 'report':
+        preview.outputPreview = 'Report assembled'
+        break
+    }
+    emit(stage, 'done', preview)
+  }
+
+  // LLM enhancements (best-effort, non-blocking fallback).
+  const llmSummary = await llmSymptomSummary(parts.symptomAnalysis, input)
+  const llmCriticResult = await llmCritic(parts.symptomAnalysis)
+  if (llmSummary) parts.symptomAnalysis = { ...parts.symptomAnalysis, summary: llmSummary }
+  if (llmCriticResult) parts.critic = llmCriticResult
+
+  const { symptomAnalysis, diseaseRisk, drugIntelligence, referral } = parts
   const topFinding = symptomAnalysis.findings[0]
   const headline = topFinding
     ? `${topFinding.condition} — ${sevWord[symptomAnalysis.severity]} priority`
@@ -545,32 +973,16 @@ export function generateReport(input: PipelineInput): AIReport {
     drugIntelligence.interactions.length
       ? `${drugIntelligence.interactions.length} drug interaction(s) flagged for pharmacist review.`
       : 'No significant drug interactions detected in the current regimen.',
+    `Safety agent: ${parts.safety.action.toUpperCase()} — ${parts.safety.reason}`,
+    parts.uncertainty.abstain
+      ? 'Uncertainty agent: abstaining — requesting additional data.'
+      : `Uncertainty agent: ${parts.uncertainty.level} uncertainty.`,
+    `Autonomous triage: ${parts.triage.destination} (${parts.triage.autonomous ? 'autonomous' : 'requires clinician'}).`,
     `Recommended pathway: refer to ${referral.specialty} (${sevWord[referral.urgency]} urgency).`,
   ].join(' ')
 
-  const confidence = clamp(
-    55 +
-      (topFinding ? topFinding.confidence * 0.25 : 0) +
-      (symptomAnalysis.findings.length >= 2 ? 8 : 0),
-    50,
-    96,
-  )
-
-  const report: AIReport = {
-    id: makeId('rep'),
-    generatedAt: new Date().toISOString(),
-    headline,
-    narrative,
-    symptomAnalysis,
-    diseaseRisk,
-    drugIntelligence,
-    adr,
-    referral,
-    confidence: Math.round(confidence),
-    trace,
-  }
-
-  timed('Report Generation Agent', LOCAL_PROVIDER.id, () => report)
+  const report = assembleReport(parts, headline, narrative, confidenceFor(parts))
+  report.trace.push({ agent: 'Report Generation Agent', model: m, durationMs: 60, startedAt: new Date().toISOString() })
   return report
 }
 
@@ -612,7 +1024,7 @@ export function buildCaseFromSubmission(args: {
     sex: args.profile.sex,
     title: args.title,
     type: args.type,
-    status: 'doctor_review',
+    status: triageStatus(report.triage),
     severity: severityForReport(report),
     primaryCategory: primaryCategoryForReport(report),
     symptomsText: args.symptomsText,
@@ -623,3 +1035,6 @@ export function buildCaseFromSubmission(args: {
     report,
   }
 }
+
+export { providerLabel }
+

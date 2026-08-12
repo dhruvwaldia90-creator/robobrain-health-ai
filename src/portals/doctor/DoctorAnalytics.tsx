@@ -1,7 +1,9 @@
 import { categoryById, DISEASE_CATEGORIES } from '@/lib/data'
 import { useAppState } from '@/lib/store'
+import { allCorrections, correctionStats } from '@/lib/learning'
 import { BarChartSimple, Donut, MultiLine, TrendArea } from '@/components/charts'
-import { Card, SectionTitle, StatCard } from '@/components/ui'
+import { Icon } from '@/components/Icon'
+import { Card, ConfidenceBar, SectionTitle, StatCard } from '@/components/ui'
 
 const volume = [
   { label: 'W1', cases: 28, reviewed: 24 },
@@ -84,6 +86,71 @@ export function DoctorAnalytics() {
           <Donut data={referrals} />
         </Card>
       </div>
+
+      {/* Doctor-feedback learning loop (#2) */}
+      <Card>
+        <SectionTitle
+          icon="GraduationCap"
+          title="Agent learning loop"
+          subtitle="Where the doctor mesh has been corrected — confidences now self-adjust"
+        />
+        <LearningPanel />
+      </Card>
+    </div>
+  )
+}
+
+/** Shows the persisted doctor corrections that the Critic Agent applies (#2). */
+function LearningPanel() {
+  const stats = correctionStats()
+  const corrections = allCorrections()
+  const { learningLog } = useAppState()
+
+  if (corrections.length === 0 && learningLog.length === 0) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl bg-ink-50 p-4 text-sm text-ink-600">
+        <Icon name="Info" size={16} className="text-brand-500" />
+        No corrections recorded yet. When you modify or escalate an AI assessment, the mesh learns
+        to be more cautious for that condition on future cases.
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="rounded-xl bg-ink-50 p-3 text-center">
+          <div className="text-2xl font-extrabold text-ink-900">{stats.conditions}</div>
+          <div className="text-xs text-ink-500">Conditions corrected</div>
+        </div>
+        <div className="rounded-xl bg-ink-50 p-3 text-center">
+          <div className="text-2xl font-extrabold text-ink-900">{stats.totalSamples}</div>
+          <div className="text-xs text-ink-500">Total corrections</div>
+        </div>
+        <div className="rounded-xl bg-ink-50 p-3 text-center">
+          <div className="text-2xl font-extrabold text-ink-900">{stats.avgDelta}</div>
+          <div className="text-xs text-ink-500">Avg confidence adjustment</div>
+        </div>
+      </div>
+      {corrections.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-sm font-semibold text-ink-700">Confidence adjustments (applied by Critic Agent)</div>
+          {corrections.map((c) => (
+            <div key={c.condition} className="rounded-xl border border-ink-100 p-3">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold capitalize text-ink-800">{c.condition}</span>
+                <span className="text-sm font-bold text-red-600">{c.delta} pts</span>
+              </div>
+              <div className="mt-1">
+                <ConfidenceBar value={Math.min(100, Math.abs(c.delta) * 4)} />
+              </div>
+              <div className="mt-1 text-xs text-ink-400">
+                {c.samples} correction(s) — future confidences lowered to reduce repeat disagreement
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

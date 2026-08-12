@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { riskAgent } from '@/lib/agents'
 import { categoryById } from '@/lib/data'
 import { severityColor, timeAgo } from '@/lib/format'
-import { useAppState } from '@/lib/store'
+import { recordVitalsSnapshot, useAppState } from '@/lib/store'
 import { BarChartSimple, TrendArea } from '@/components/charts'
 import { Icon } from '@/components/Icon'
 import {
@@ -14,22 +14,27 @@ import {
   StatusBadge,
 } from '@/components/ui'
 
-const vitalsTrend = [
-  { label: 'Mon', value: 142 },
-  { label: 'Tue', value: 150 },
-  { label: 'Wed', value: 146 },
-  { label: 'Thu', value: 154 },
-  { label: 'Fri', value: 148 },
-  { label: 'Sat', value: 151 },
-  { label: 'Sun', value: 148 },
-]
-
 export function PatientDashboard() {
-  const { cases, profile } = useAppState()
+  const { cases, profile, vitalsHistory } = useAppState()
   const myCases = cases.filter((c) => c.patientId === profile.id)
   const reviewed = myCases.filter((c) => c.status === 'reviewed').length
   const pending = myCases.filter((c) => c.status !== 'reviewed').length
   const risk = riskAgent.run({ profile })
+
+  // Longitudinal monitoring (#9): build a trend from the stored vitals history,
+  // with a real-time risk trend derived from each snapshot.
+  const bpTrend = vitalsHistory.map((s) => ({
+    label: new Date(s.takenAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    value: s.vitals.systolic,
+  }))
+  const riskTrend = vitalsHistory.map((s) => ({
+    label: new Date(s.takenAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    value: riskAgent.run({ profile: { ...profile, vitals: s.vitals } }).overall,
+  }))
+  const latestRisk = riskTrend[riskTrend.length - 1]?.value ?? risk.overall
+  const prevRisk = riskTrend[riskTrend.length - 2]?.value
+  const trendDelta = prevRisk != null ? latestRisk - prevRisk : 0
+  const trendingUp = trendDelta > 0
 
   return (
     <div className="space-y-6">
@@ -119,12 +124,35 @@ export function PatientDashboard() {
         </Card>
 
         <Card>
-          <SectionTitle icon="Activity" title="Systolic BP trend" subtitle="Last 7 days" />
-          <TrendArea data={vitalsTrend} color="#f43f5e" height={180} />
+          <div className="flex items-center justify-between">
+            <SectionTitle icon="Activity" title="Systolic BP trend" subtitle="Longitudinal history" />
+            <button
+              onClick={() => recordVitalsSnapshot()}
+              className="btn-ghost px-3 py-1.5 text-xs"
+              title="Snapshot today's vitals into your longitudinal record"
+            >
+              <Icon name="Plus" size={14} /> Record vitals
+            </button>
+          </div>
+          <TrendArea data={bpTrend} color="#f43f5e" height={150} />
+          <div
+            className={
+              'mt-3 rounded-xl p-3 text-sm ' +
+              (trendingUp ? 'bg-red-50 text-red-700' : trendDelta < 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-ink-50 text-ink-600')
+            }
+          >
+            <Icon name={trendingUp ? 'TrendingUp' : trendDelta < 0 ? 'TrendingDown' : 'Minus'} size={15} className="mr-1 inline" />
+            Risk index {trendDelta === 0 ? 'stable' : trendingUp ? `trending up (+${trendDelta})` : `improving (${trendDelta})`} —
+            proactive monitoring across {vitalsHistory.length} snapshots.
+          </div>
+          <div className="mt-4">
+            <h4 className="mb-2 text-sm font-bold text-ink-700">Risk index over time</h4>
+            <TrendArea data={riskTrend} color="#a855f7" height={120} />
+          </div>
           <div className="mt-4">
             <h4 className="mb-2 text-sm font-bold text-ink-700">Top risk categories</h4>
             <BarChartSimple
-              height={170}
+              height={150}
               data={risk.scores.slice(0, 4).map((s) => ({
                 label: categoryById(s.category).short,
                 value: s.score,

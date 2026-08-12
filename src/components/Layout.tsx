@@ -3,6 +3,8 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import type { Role } from '@/types'
 import { useAuth } from '@/context/AuthContext'
+import { AGENTS } from '@/lib/data'
+import { loadLlmConfig, toggleLlm } from '@/lib/llm'
 import { Icon } from './Icon'
 import { Avatar } from './ui'
 
@@ -48,6 +50,7 @@ export function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
+  const [llmOn, setLlmOn] = useState(() => loadLlmConfig().enabled)
   if (!user) return null
   const items = NAV[user.role]
 
@@ -142,9 +145,25 @@ export function Layout() {
             Agentic clinical intelligence
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => {
+                const next = toggleLlm(!llmOn)
+                setLlmOn(next.enabled)
+              }}
+              className={
+                'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ' +
+                (llmOn
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-ink-100 text-ink-600 hover:bg-ink-200')
+              }
+              title="Toggle between the local deterministic reasoner and the LLM backend"
+            >
+              <Icon name={llmOn ? 'Sparkles' : 'Cpu'} size={13} />
+              {llmOn ? 'LLM Reasoner' : 'Local Reasoner'}
+            </button>
             <span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 sm:inline-flex">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-              7 agents online
+              {AGENTS.length} agents online
             </span>
             <Avatar name={user.name} color={user.avatarColor} size={34} />
           </div>

@@ -20,6 +20,8 @@ export const statusLabel: Record<string, string> = {
   analyzing: 'Analyzing',
   ai_complete: 'AI Complete',
   doctor_review: 'Awaiting Doctor',
+  pharmacist_review: 'Pharmacist Review',
+  auto_resolved: 'Auto-resolved',
   reviewed: 'Reviewed',
 }
 

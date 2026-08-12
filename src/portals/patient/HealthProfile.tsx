@@ -1,9 +1,19 @@
+import { useState } from 'react'
+import type { PatientProfile } from '@/types'
 import { riskAgent } from '@/lib/agents'
 import { categoryById } from '@/lib/data'
 import { severityColor } from '@/lib/format'
 import { updateProfile, useAppState } from '@/lib/store'
 import { RiskRadar } from '@/components/charts'
 import { Card, ConfidenceBar, SectionTitle } from '@/components/ui'
+import { Icon } from '@/components/Icon'
+
+interface WhatIf {
+  id: string
+  label: string
+  icon: string
+  apply: (p: PatientProfile) => PatientProfile
+}
 
 export function HealthProfile() {
   const { profile } = useAppState()
@@ -12,6 +22,44 @@ export function HealthProfile() {
 
   const vital = (key: keyof typeof profile.vitals, value: number) =>
     updateProfile({ vitals: { ...profile.vitals, [key]: value } })
+
+  // --- Digital twin / what-if simulation (#11) ---
+  const [sim, setSim] = useState<Record<string, boolean>>({})
+  const whatIfs: WhatIf[] = [
+    {
+      id: 'quitSmoking',
+      label: 'Quit smoking',
+      icon: 'Cigarette',
+      apply: (p) => ({ ...p, vitals: { ...p.vitals, smoker: false } }),
+    },
+    {
+      id: 'lowerBp',
+      label: 'BP controlled (120/80)',
+      icon: 'HeartPulse',
+      apply: (p) => ({ ...p, vitals: { ...p.vitals, systolic: 120, diastolic: 80 } }),
+    },
+    {
+      id: 'lowerChol',
+      label: 'Cholesterol lowered (160)',
+      icon: 'Activity',
+      apply: (p) => ({ ...p, vitals: { ...p.vitals, cholesterolMgDl: 160 } }),
+    },
+    {
+      id: 'lowerGlucose',
+      label: 'Glucose controlled (110)',
+      icon: 'Droplets',
+      apply: (p) => ({ ...p, vitals: { ...p.vitals, glucoseMgDl: 110 } }),
+    },
+    {
+      id: 'loseWeight',
+      label: 'Weight -8kg',
+      icon: 'Scale',
+      apply: (p) => ({ ...p, weightKg: Math.max(50, p.weightKg - 8) }),
+    },
+  ]
+  const simProfile = whatIfs.reduce((p, w) => (sim[w.id] ? w.apply(p) : p), profile)
+  const simRisk = riskAgent.run({ profile: simProfile })
+  const delta = risk.overall - simRisk.overall
 
   return (
     <div className="space-y-6">
@@ -96,6 +144,64 @@ export function HealthProfile() {
           </p>
         </Card>
       </div>
+
+      {/* Digital twin / what-if simulation (#11) */}
+      <Card>
+        <SectionTitle
+          icon="FlaskConical"
+          title="Digital twin — what-if simulation"
+          subtitle="Toggle interventions to project how your overall risk would change"
+        />
+        <div className="flex flex-wrap gap-2">
+          {whatIfs.map((w) => (
+            <button
+              key={w.id}
+              onClick={() => setSim((s) => ({ ...s, [w.id]: !s[w.id] }))}
+              className={
+                'inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-semibold transition ' +
+                (sim[w.id]
+                  ? 'border-brand-400 bg-brand-50 text-brand-700 ring-2 ring-brand-100'
+                  : 'border-ink-200 bg-white text-ink-600 hover:bg-ink-50')
+              }
+            >
+              <Icon name={sim[w.id] ? 'CircleCheck' : w.icon} size={15} />
+              {w.label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+          <div className="rounded-xl bg-ink-50 p-4 text-center">
+            <div className="text-xs font-semibold text-ink-500">Current risk</div>
+            <div className="mt-1 text-3xl font-extrabold text-ink-900">{risk.overall}</div>
+          </div>
+          <div className="rounded-xl bg-brand-50 p-4 text-center">
+            <div className="text-xs font-semibold text-brand-600">Projected risk</div>
+            <div className="mt-1 text-3xl font-extrabold text-brand-700">{simRisk.overall}</div>
+          </div>
+          <div
+            className={
+              'rounded-xl p-4 text-center ' +
+              (delta > 0 ? 'bg-emerald-50' : delta < 0 ? 'bg-red-50' : 'bg-ink-50')
+            }
+          >
+            <div className="text-xs font-semibold text-ink-500">Projected change</div>
+            <div
+              className={
+                'mt-1 text-3xl font-extrabold ' +
+                (delta > 0 ? 'text-emerald-700' : delta < 0 ? 'text-red-700' : 'text-ink-900')
+              }
+            >
+              {delta > 0 ? '−' : delta < 0 ? '+' : ''}{Math.abs(delta)}
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 flex items-start gap-2 rounded-xl bg-ink-50 p-3 text-sm text-ink-600">
+          <Icon name="Info" size={15} className="mt-0.5 text-brand-500" />
+          {Object.values(sim).some(Boolean)
+            ? `Simulating ${whatIfs.filter((w) => sim[w.id]).map((w) => w.label.toLowerCase()).join(', ')} — projected overall risk ${simRisk.overall}/100. This is a simulation on your digital twin; it does not change your real profile.`
+            : 'Toggle one or more interventions above to project their combined effect on your risk index.'}
+        </div>
+      </Card>
     </div>
   )
 }
