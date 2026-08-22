@@ -134,9 +134,31 @@ const normalize = (s: string) => s.toLowerCase().replace(/[_\s]+/g, ' ').trim()
 /** Phrase (normalized) for each model feature, precomputed once. */
 const FEATURE_PHRASES = model.symptoms.map((s) => normalize(s))
 
+/** Negation cues checked in the few words before a matched symptom phrase. */
+const NEGATIONS = ['no', 'not', 'denies', 'denied', 'without', 'never', 'none']
+
+/** True when the occurrence of `phrase` at `at` in `text` is negated. */
+function isNegated(text: string, at: number): boolean {
+  const before = text.slice(Math.max(0, at - 30), at)
+  const words = before.split(/[^a-z]+/).filter(Boolean)
+  return words.slice(-3).some((w) => NEGATIONS.includes(w))
+}
+
+/** Find a phrase in normalized text at word boundaries, skipping negated mentions. */
+function findPhrase(text: string, phrase: string): boolean {
+  let from = 0
+  for (;;) {
+    const at = text.indexOf(` ${phrase}`, from)
+    if (at === -1) return false
+    if (!isNegated(text, at)) return true
+    from = at + 1
+  }
+}
+
 /**
  * Turn free text into the 132-dim binary feature vector and report which
- * symptoms were detected.
+ * symptoms were detected. Negated mentions ("no fever", "denies chest pain")
+ * do not activate a feature.
  */
 export function extractFeatures(text: string): { vector: number[]; matched: string[] } {
   const t = ` ${normalize(text)} `
@@ -144,7 +166,7 @@ export function extractFeatures(text: string): { vector: number[]; matched: stri
   const matched: string[] = []
   model.symptoms.forEach((sym, i) => {
     const phrases = [FEATURE_PHRASES[i], ...(SYNONYMS[sym] ?? [])]
-    if (phrases.some((p) => p.length > 2 && t.includes(` ${p}`))) {
+    if (phrases.some((p) => p.length > 2 && findPhrase(t, p))) {
       vector[i] = 1
       matched.push(sym)
     }

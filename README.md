@@ -126,7 +126,7 @@ flowchart LR
 ```
 
 - **Training**: `ml/train.py` (scikit-learn) trains on the Kaggle *Disease Prediction* dataset and exports the winning model's weights to `ml/model.json`.
-- **Inference**: `src/lib/ml/classifier.ts` runs the model in pure TypeScript (dot-product + softmax) — no server, no runtime dependencies. Verified to match sklearn `predict_proba` to within 5e-7.
+- **Inference**: `src/lib/ml/classifier.ts` runs the model in pure TypeScript (dot-product + softmax) — no server, no runtime dependencies. Verified to match sklearn `predict_proba` to within 5e-7. Free-text feature extraction is negation-aware ("no chest pain" does not activate the feature) and covered by unit tests (`npm test`).
 - **Honest metrics**: the dataset is synthetic and separable (holdout accuracy 100% for every model), so the meaningful number is the noisy-input eval — **~93% top-1 / 100% top-3 accuracy** when half the symptoms are dropped and noise added (see `ml/eval_report.json`).
 - **Retrain**: `pip install scikit-learn pandas numpy && python3 ml/train.py && cp ml/model.json src/lib/ml/model.json`.
 
@@ -228,6 +228,7 @@ npm run build       # type-check + production build to dist/
 npm run preview     # preview the production build
 npm run lint        # ESLint
 npm run typecheck   # TypeScript type-check (no emit)
+npm test            # Vitest unit tests (ML classifier + agent pipeline)
 ```
 
 ### 🔑 Demo accounts
