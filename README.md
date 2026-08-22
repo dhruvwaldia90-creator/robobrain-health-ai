@@ -191,11 +191,15 @@ flowchart TD
 
 ---
 
-## 🔗 Live Demo
+## 🔗 Live Demo (permanent)
 
-The app is deployed to GitHub Pages — a permanent, public URL with no login wall:
+The app is permanently deployed to **GitHub Pages** — auto-redeployed on every push to `main`/`devin/*` via `.github/workflows/deploy.yml`:
 
 **👉 https://manassawant607-arch.github.io/robobrain-health-ai/**
+
+- **Always on** — no server to sleep, no login wall; Local Reasoner + ML classifier run fully in-browser.
+- **Merge gate** — every pull request runs `npm test` + `npm run build` in CI before it can land; pushes auto-deploy.
+- **Custom domain (optional)** — add a `CNAME` record pointing to `manassawant607-arch.github.io` and set it in repo Settings → Pages.
 
 Use one-click demo login on the sign-in page (any role). The **Local Reasoner** mode runs fully in-browser — no API key required.
 
