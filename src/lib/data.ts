@@ -88,7 +88,7 @@ export const AGENTS = [
     id: 'symptom',
     name: 'Symptom Analysis Agent',
     icon: 'Stethoscope',
-    blurb: 'Parses free-text symptoms into ranked differential diagnoses with confidence scores.',
+    blurb: 'Parses free-text symptoms into ranked differentials, fused with a logistic-regression classifier trained on 4,920 Kaggle cases.',
   },
   {
     id: 'tools',

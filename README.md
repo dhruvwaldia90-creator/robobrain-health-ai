@@ -106,6 +106,31 @@ export interface Agent<I, O> {
 | 10 | **Outbreak / anomaly detection** | Autonomous monitoring of case incidence against baselines; flags outbreaks, spikes, and drops in the researcher portal. |
 | 11 | **Digital-twin what-if simulation** | Toggle interventions (quit smoking, control BP / cholesterol / glucose, lose weight) and see projected risk change. |
 | 12 | **LLM integration with graceful fallback** | A serverless LLM endpoint (OpenAI-compatible) with a header toggle between Local Reasoner and LLM Reasoner. Falls back to deterministic local reasoning when no key is configured. |
+| 13 | **Kaggle-trained ML classifier in the browser** | A multinomial logistic-regression model trained on the Kaggle Disease Prediction dataset (4,920 cases, 132 symptoms, 41 diseases), exported to JSON and run with pure TypeScript inference — fused with the rule engine inside the Symptom Analysis Agent. |
+| 14 | **LLM-augmented agent mesh** | Seven concurrent LLM tasks refine every agent's output (symptom summary, critic debate, risk insight, drug advice, referral note, uncertainty data requests, report narrative) with per-agent validation and silent local fallback. |
+
+---
+
+## 🤖 ML-Trained Classifier
+
+The Symptom Analysis Agent doesn't just match keywords — it runs a **real trained model** alongside the rule engine:
+
+```mermaid
+flowchart LR
+    T[Free-text symptoms] --> FE["Feature extraction<br/>132 binary symptom features"]
+    FE --> ML["Logistic regression<br/>model.json weights"]
+    ML --> P["Top-3 diseases<br/>+ calibrated probabilities"]
+    FE --> RE["Rule engine<br/>clinical heuristics"]
+    RE --> M[Fused differential]
+    P --> M
+```
+
+- **Training**: `ml/train.py` (scikit-learn) trains on the Kaggle *Disease Prediction* dataset and exports the winning model's weights to `ml/model.json`.
+- **Inference**: `src/lib/ml/classifier.ts` runs the model in pure TypeScript (dot-product + softmax) — no server, no runtime dependencies. Verified to match sklearn `predict_proba` to within 5e-7.
+- **Honest metrics**: the dataset is synthetic and separable (holdout accuracy 100% for every model), so the meaningful number is the noisy-input eval — **~93% top-1 / 100% top-3 accuracy** when half the symptoms are dropped and noise added (see `ml/eval_report.json`).
+- **Retrain**: `pip install scikit-learn pandas numpy && python3 ml/train.py && cp ml/model.json src/lib/ml/model.json`.
+
+When the LLM Reasoner is enabled, each agent's local + ML output is further refined by a dedicated LLM task (see Innovation #14) — all calls run concurrently, are shape-validated, and fall back silently to the deterministic result on any failure.
 
 ---
 
@@ -241,7 +266,10 @@ src/
 ├── App.tsx                 # Routes + role guards
 ├── context/AuthContext.tsx # Auth state (localStorage session)
 ├── lib/
-│   ├── agents.ts           # 11 AI agents + streaming report orchestration
+│   ├── agents.ts           # 11 AI agents + LLM augmentation + streaming orchestration
+│   ├── ml/
+│   │   ├── classifier.ts   # Pure-TS inference for the Kaggle-trained model
+│   │   └── model.json      # Exported logistic-regression weights (132 symptoms → 41 diseases)
 │   ├── llm.ts              # LLM client with graceful fallback to local reasoner
 │   ├── learning.ts         # Doctor-feedback learning loop
 │   ├── tools.ts            # Agentic tool-use framework
@@ -261,6 +289,10 @@ src/
     └── researcher/         # Dashboard (outbreak detection), Cohort Explorer, Disease Atlas
 api/
 └── llm.ts                  # Vercel serverless LLM endpoint (OpenAI-compatible)
+ml/
+├── data/                   # Kaggle Disease Prediction dataset (GitHub mirror, vendored)
+├── train.py                # Training pipeline: compares LR / NB / RF, exports model.json
+└── README.md               # Retraining instructions + honest metrics
 .github/workflows/
 └── deploy.yml              # GitHub Pages auto-deploy on push
 ```

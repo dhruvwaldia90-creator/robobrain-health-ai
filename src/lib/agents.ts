@@ -22,15 +22,18 @@ import type {
 import { correctionFor, seedCorrections } from './learning'
 import { runTools } from './tools'
 import { activeProviderId, llmComplete, parseJson, providerModel, providerLabel } from './llm'
+import { classifySymptomText } from './ml/classifier'
 import type { ProviderId } from '@/types'
 
 /**
  * RoboBrain agent layer.
  *
- * Every agent implements the {@link Agent} interface. Today they run as
+ * Every agent implements the {@link Agent} interface. They run as
  * deterministic, explainable inference engines in the browser so the platform
- * is fully functional with zero external dependencies. The same interface can
- * be backed by an LLM/clinical-API provider later — see {@link InferenceProvider}.
+ * is fully functional with zero external dependencies. When the LLM provider
+ * is enabled, `generateReportStream` augments each agent's output with
+ * validated LLM responses (see the llm* helpers below) and silently falls
+ * back to the local result on any failure.
  */
 export interface Agent<I, O> {
   id: string
@@ -201,12 +204,36 @@ export const symptomAgent: Agent<{ text: string; profile?: PatientProfile }, Sym
       rationale: `${s.matches} matching symptom signal${s.matches > 1 ? 's' : ''} detected for ${s.rule.condition}.`,
     }))
 
+    // ML classifier (multinomial logistic regression trained on the Kaggle
+    // Disease Prediction dataset) runs on the same text; its top predictions
+    // are merged in unless a rule finding already covers the condition.
+    const mlTop = classifySymptomText(text, 3)
+    for (const pred of mlTop) {
+      if (pred.probability < 0.05) continue
+      const covered = findings.some((f) => {
+        const a = f.condition.toLowerCase()
+        const b = pred.disease.toLowerCase()
+        return a.includes(b) || b.includes(a)
+      })
+      if (covered) continue
+      findings.push({
+        condition: pred.disease,
+        category: pred.category,
+        confidence: Math.min(95, round(pred.probability * 100)),
+        rationale: `ML classifier (${pred.matchedSymptoms.length} symptom features matched) assigns ${round(pred.probability * 100)}% probability — model trained on 4,920 Kaggle cases.`,
+      })
+    }
+    findings.sort((a, b) => b.confidence - a.confidence)
+
     const topScore = top[0]?.confidence ?? 15
     const severity = bandFromScore(topScore)
     const redFlags = Array.from(new Set(top.flatMap((s) => s.rule.redFlags ?? [])))
 
+    const mlNote = mlTop.length
+      ? ` ML model top prediction: ${mlTop[0].disease} (${round(mlTop[0].probability * 100)}%).`
+      : ''
     const summary = findings.length
-      ? `Differential led by ${findings[0].condition} (${findings[0].confidence}% confidence). ${findings.length} candidate condition${findings.length > 1 ? 's' : ''} identified across ${new Set(findings.map((f) => f.category)).size} disease categor${new Set(findings.map((f) => f.category)).size > 1 ? 'ies' : 'y'}.`
+      ? `Differential led by ${findings[0].condition} (${findings[0].confidence}% confidence). ${findings.length} candidate condition${findings.length > 1 ? 's' : ''} identified across ${new Set(findings.map((f) => f.category)).size} disease categor${new Set(findings.map((f) => f.category)).size > 1 ? 'ies' : 'y'}.${mlNote}`
       : 'No strong symptom signals detected. Recommend structured history taking and baseline vitals.'
 
     return {
@@ -755,6 +782,129 @@ async function llmSymptomSummary(symptom: SymptomAnalysis, input: PipelineInput)
   return raw
 }
 
+/** Trimmed plain-text guard: rejects empty, over-long and JSON-shaped replies. */
+function cleanText(raw: string | null, maxLen: number): string | null {
+  const text = raw?.trim()
+  if (!text || text.length > maxLen || text.startsWith('{')) return null
+  return text
+}
+
+/** LLM risk insight: one sentence naming the dominant risk driver. */
+async function llmRiskInsight(risk: DiseaseRiskResult, profile: PatientProfile): Promise<string | null> {
+  if (provider() !== 'llm') return null
+  const raw = await llmComplete({
+    task: 'risk-insight',
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are a clinical risk analyst. Reply ONLY with JSON: {"insight":"one sentence, max 25 words, naming the dominant risk driver and one modifiable factor"}. No diagnosis.',
+      },
+      {
+        role: 'user',
+        content: `Risk scores: ${JSON.stringify(risk.scores.slice(0, 3))}. Vitals: ${JSON.stringify(profile.vitals)}. Age ${profile.age}, conditions: ${profile.conditions.join(', ') || 'none'}.`,
+      },
+    ],
+    maxTokens: 120,
+  })
+  const parsed = raw ? parseJson<{ insight: string }>(raw) : null
+  return cleanText(parsed?.insight ?? null, 220)
+}
+
+/** LLM drug-safety advice: one pharmacist-facing sentence on the flagged interactions. */
+async function llmDrugAdvice(drug: DrugIntelligenceResult): Promise<string | null> {
+  if (provider() !== 'llm' || drug.interactions.length === 0) return null
+  const raw = await llmComplete({
+    task: 'drug-advice',
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are a clinical pharmacist. Reply ONLY with JSON: {"advice":"one sentence, max 25 words, on managing the flagged interaction"}. Do not suggest new drugs.',
+      },
+      {
+        role: 'user',
+        content: `Interactions: ${JSON.stringify(drug.interactions.slice(0, 3).map((i) => ({ pair: i.pair, severity: i.severity, effect: i.effect })))}.`,
+      },
+    ],
+    maxTokens: 120,
+  })
+  const parsed = raw ? parseJson<{ advice: string }>(raw) : null
+  return cleanText(parsed?.advice ?? null, 220)
+}
+
+/** LLM referral note: a concise reason addressed to the receiving clinician. */
+async function llmReferralNote(referral: ReferralResult, symptom: SymptomAnalysis): Promise<string | null> {
+  if (provider() !== 'llm') return null
+  const raw = await llmComplete({
+    task: 'referral-note',
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are a triage clinician writing a referral. Reply ONLY with JSON: {"note":"one sentence, max 30 words, stating why this patient needs the specialty"}. Plain clinical tone.',
+      },
+      {
+        role: 'user',
+        content: `Specialty: ${referral.specialty}, urgency ${referral.urgency}. Top differential: ${symptom.findings[0]?.condition ?? 'none'} (${symptom.findings[0]?.confidence ?? 0}%). Red flags: ${symptom.redFlags.join('; ') || 'none'}.`,
+      },
+    ],
+    maxTokens: 120,
+  })
+  const parsed = raw ? parseJson<{ note: string }>(raw) : null
+  return cleanText(parsed?.note ?? null, 260)
+}
+
+/** LLM uncertainty: suggest specific data to collect next, merged with local requests. */
+async function llmUncertaintyData(uncertainty: UncertaintyResult, symptom: SymptomAnalysis): Promise<string[] | null> {
+  if (provider() !== 'llm') return null
+  const raw = await llmComplete({
+    task: 'uncertainty-data',
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are a clinical diagnostics agent. Reply ONLY with JSON: {"requests":["up to 3 specific data items to collect next, each max 12 words"]}. No treatments.',
+      },
+      {
+        role: 'user',
+        content: `Top differential: ${symptom.findings[0]?.condition ?? 'none'} (${symptom.findings[0]?.confidence ?? 0}%). Already requested: ${uncertainty.additionalDataRequested.join('; ') || 'nothing'}. Abstaining: ${uncertainty.abstain}.`,
+      },
+    ],
+    maxTokens: 160,
+  })
+  const parsed = raw ? parseJson<{ requests: unknown[] }>(raw) : null
+  if (!parsed || !Array.isArray(parsed.requests)) return null
+  const clean = parsed.requests
+    .filter((r): r is string => typeof r === 'string')
+    .map((r) => r.trim())
+    .filter((r) => r.length > 0 && r.length <= 120)
+    .slice(0, 3)
+  return clean.length ? clean : null
+}
+
+/** LLM report narrative: 2–3 sentence clinician summary replacing the template. */
+async function llmReportNarrative(parts: IntermediateReport, input: PipelineInput): Promise<string | null> {
+  if (provider() !== 'llm') return null
+  const raw = await llmComplete({
+    task: 'report-narrative',
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are the RoboBrain report writer. Write a 2-3 sentence clinician-facing assessment narrative (max 70 words) covering the leading differential, the safety verdict and the triage destination. Plain text only.',
+      },
+      {
+        role: 'user',
+        content: `Symptoms: ${input.symptomsText.slice(0, 300)}. Leading differential: ${parts.symptomAnalysis.findings[0]?.condition ?? 'none'} (${parts.symptomAnalysis.findings[0]?.confidence ?? 0}%, ${parts.symptomAnalysis.severity} severity). Risk: ${parts.diseaseRisk.scores[0]?.category ?? 'n/a'} ${parts.diseaseRisk.overall}/100. Interactions: ${parts.drugIntelligence.interactions.length}. Safety: ${parts.safety.action}. Triage: ${parts.triage.destination}.`,
+      },
+    ],
+    maxTokens: 200,
+  })
+  const text = cleanText(raw, 600)
+  return text && text.length >= 40 ? text : null
+}
+
 interface IntermediateReport {
   symptomAnalysis: SymptomAnalysis
   diseaseRisk: DiseaseRiskResult
@@ -954,11 +1104,30 @@ export async function generateReportStream(
     emit(stage, 'done', preview)
   }
 
-  // LLM enhancements (best-effort, non-blocking fallback).
-  const llmSummary = await llmSymptomSummary(parts.symptomAnalysis, input)
-  const llmCriticResult = await llmCritic(parts.symptomAnalysis)
+  // LLM enhancements (best-effort, concurrent, silent fallback per agent).
+  const [llmSummary, llmCriticResult, llmRisk, llmDrug, llmReferral, llmData, llmNarrative] =
+    await Promise.all([
+      llmSymptomSummary(parts.symptomAnalysis, input),
+      llmCritic(parts.symptomAnalysis),
+      llmRiskInsight(parts.diseaseRisk, input.profile),
+      llmDrugAdvice(parts.drugIntelligence),
+      llmReferralNote(parts.referral, parts.symptomAnalysis),
+      llmUncertaintyData(parts.uncertainty, parts.symptomAnalysis),
+      llmReportNarrative(parts, input),
+    ])
   if (llmSummary) parts.symptomAnalysis = { ...parts.symptomAnalysis, summary: llmSummary }
   if (llmCriticResult) parts.critic = llmCriticResult
+  if (llmDrug)
+    parts.drugIntelligence = {
+      ...parts.drugIntelligence,
+      adherenceTips: [...parts.drugIntelligence.adherenceTips, `LLM pharmacist note: ${llmDrug}`],
+    }
+  if (llmReferral) parts.referral = { ...parts.referral, reason: llmReferral }
+  if (llmData)
+    parts.uncertainty = {
+      ...parts.uncertainty,
+      additionalDataRequested: Array.from(new Set([...parts.uncertainty.additionalDataRequested, ...llmData])),
+    }
 
   const { symptomAnalysis, diseaseRisk, drugIntelligence, referral } = parts
   const topFinding = symptomAnalysis.findings[0]
@@ -966,10 +1135,11 @@ export async function generateReportStream(
     ? `${topFinding.condition} — ${sevWord[symptomAnalysis.severity]} priority`
     : 'No acute findings — routine follow-up'
 
-  const narrative = [
+  const templateNarrative = [
     `RoboBrain analyzed the patient's presentation and computed a ${sevWord[symptomAnalysis.severity]}-priority assessment.`,
     symptomAnalysis.summary,
     `Dominant background risk: ${diseaseRisk.scores[0].category} (${diseaseRisk.scores[0].score}/100).`,
+    llmRisk ? `Risk insight: ${llmRisk}` : null,
     drugIntelligence.interactions.length
       ? `${drugIntelligence.interactions.length} drug interaction(s) flagged for pharmacist review.`
       : 'No significant drug interactions detected in the current regimen.',
@@ -979,7 +1149,10 @@ export async function generateReportStream(
       : `Uncertainty agent: ${parts.uncertainty.level} uncertainty.`,
     `Autonomous triage: ${parts.triage.destination} (${parts.triage.autonomous ? 'autonomous' : 'requires clinician'}).`,
     `Recommended pathway: refer to ${referral.specialty} (${sevWord[referral.urgency]} urgency).`,
-  ].join(' ')
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const narrative = llmNarrative ?? templateNarrative
 
   const report = assembleReport(parts, headline, narrative, confidenceFor(parts))
   report.trace.push({ agent: 'Report Generation Agent', model: m, durationMs: 60, startedAt: new Date().toISOString() })
