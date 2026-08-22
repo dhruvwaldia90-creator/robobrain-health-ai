@@ -20,11 +20,13 @@ const NAV: Record<Role, NavItem[]> = {
     { to: '/app/patient', label: 'Dashboard', icon: 'LayoutDashboard', end: true },
     { to: '/app/patient/upload', label: 'New Submission', icon: 'Upload' },
     { to: '/app/patient/reports', label: 'My AI Reports', icon: 'FileText' },
+    { to: '/app/patient/exchange', label: 'Decision Exchange', icon: 'Share2' },
     { to: '/app/patient/profile', label: 'Health Profile', icon: 'HeartPulse' },
   ],
   doctor: [
     { to: '/app/doctor', label: 'Dashboard', icon: 'LayoutDashboard', end: true },
     { to: '/app/doctor/queue', label: 'Review Queue', icon: 'ClipboardList' },
+    { to: '/app/doctor/inbox', label: 'Decision Inbox', icon: 'Inbox' },
     { to: '/app/doctor/analytics', label: 'Analytics', icon: 'BarChart3' },
   ],
   pharmacist: [

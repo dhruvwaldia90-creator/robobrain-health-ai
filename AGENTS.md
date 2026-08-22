@@ -55,6 +55,13 @@
 - Symptom Agent merges ML top-3 (prob >= 5%) into findings unless a rule finding already covers the condition; confidences capped at 95.
 - Eval honesty: holdout is 100% (synthetic separable data) — quote the noisy-input metric (~93% top-1, 100% top-3) from `ml/eval_report.json` instead.
 
+## Decision Support Exchange (added 2026-08)
+- `DecisionExchangeRecord` in `src/types.ts` — standardized portable record (schemaVersion, patientId, caseId, input vitals/symptoms/observations, assessment riskLevel+findings+confidence 0–100, recommendation action+rationale+urgency, provenance, review pending/accepted/overridden).
+- `src/lib/exchange.ts` — transformation layer: `createDecisionExchangeRecord()` (normalizer, null when case has no report), `validateDecisionExchangeRecord()` (returns error strings, [] = valid), `serialize/parseDecisionExchangeRecord()`. Urgency derived via `urgencyForSeverity()`.
+- Store: `exchangeRecords` slice persisted at `robobrain.exchange.v1`; `sendDecisionRecord()` upserts by recordId, `reviewDecisionRecord()` sets reviewer/note/reviewedAt, `exchangeRecords()` getter for tests.
+- UI: shared `src/components/ExchangeRecordCard.tsx` (+`ReviewStatusChip`). Patient page `/app/patient/exchange` (`PatientDecisionExchange` — Generate/Send/Export/Import, accepts `location.state.caseId`), doctor page `/app/doctor/inbox` (`DecisionInbox` — accept/override + note). Link from PatientReports preselects the case.
+- Tests: `src/lib/exchange.test.ts` (13 tests) follows the agents.test.ts localStorage-stub + dynamic-import pattern.
+
 ## LLM Agent Augmentation (added 2026-08)
 - `generateReportStream` runs 7 concurrent LLM calls after the local pipeline: symptom-summary, critic, risk-insight, drug-advice, referral-note, uncertainty-data, report-narrative (all `llm*` helpers in `src/lib/agents.ts`).
 - Pattern per helper: early-return null unless `provider() === 'llm'` → `llmComplete` → `parseJson` → validate (shape + length, `cleanText` rejects JSON-shaped junk for plain-text fields) → null falls back to local output.

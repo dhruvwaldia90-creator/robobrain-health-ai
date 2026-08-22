@@ -1,7 +1,9 @@
 import { useSyncExternalStore } from 'react'
 import type {
   Case,
+  DecisionExchangeRecord,
   DoctorNote,
+  ExchangeReviewStatus,
   LearningEntry,
   PatientProfile,
   VitalsSnapshot,
@@ -13,12 +15,14 @@ const CASES_KEY = 'robobrain.cases.v1'
 const PROFILE_KEY = 'robobrain.profile.v1'
 const VITALS_HISTORY_KEY = 'robobrain.vitals-history.v1'
 const LEARNING_KEY = 'robobrain.learning-log.v1'
+const EXCHANGE_KEY = 'robobrain.exchange.v1'
 
 interface AppState {
   cases: Case[]
   profile: PatientProfile
   vitalsHistory: VitalsSnapshot[]
   learningLog: LearningEntry[]
+  exchangeRecords: DecisionExchangeRecord[]
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -55,6 +59,7 @@ let state: AppState = {
   profile: load<PatientProfile>(PROFILE_KEY, DEMO_PROFILE),
   vitalsHistory: load<VitalsSnapshot[]>(VITALS_HISTORY_KEY, seedVitalsHistory()),
   learningLog: load<LearningEntry[]>(LEARNING_KEY, []),
+  exchangeRecords: load<DecisionExchangeRecord[]>(EXCHANGE_KEY, []),
 }
 
 const listeners = new Set<() => void>()
@@ -65,6 +70,7 @@ function persist() {
     localStorage.setItem(PROFILE_KEY, JSON.stringify(state.profile))
     localStorage.setItem(VITALS_HISTORY_KEY, JSON.stringify(state.vitalsHistory))
     localStorage.setItem(LEARNING_KEY, JSON.stringify(state.learningLog))
+    localStorage.setItem(EXCHANGE_KEY, JSON.stringify(state.exchangeRecords))
   } catch {
     /* storage may be unavailable; in-memory state still works */
   }
@@ -145,12 +151,59 @@ export function learningLog(): LearningEntry[] {
   return state.learningLog
 }
 
+/**
+ * Exchange a standardized decision record (send to doctor or import).
+ * Upserts by recordId so a re-sent or re-imported record replaces the old copy.
+ */
+export function sendDecisionRecord(record: DecisionExchangeRecord) {
+  state = {
+    ...state,
+    exchangeRecords: [
+      record,
+      ...state.exchangeRecords.filter((r) => r.recordId !== record.recordId),
+    ],
+  }
+  emit()
+}
+
+/**
+ * Doctor review of an exchanged record. The AI recommends; the doctor decides —
+ * accepting or overriding always sets reviewer, note and reviewedAt.
+ */
+export function reviewDecisionRecord(
+  recordId: string,
+  review: { status: Exclude<ExchangeReviewStatus, 'pending'>; reviewer: string; note: string },
+) {
+  state = {
+    ...state,
+    exchangeRecords: state.exchangeRecords.map((r) =>
+      r.recordId === recordId
+        ? {
+            ...r,
+            review: {
+              status: review.status,
+              reviewer: review.reviewer,
+              note: review.note,
+              reviewedAt: new Date().toISOString(),
+            },
+          }
+        : r,
+    ),
+  }
+  emit()
+}
+
+export function exchangeRecords(): DecisionExchangeRecord[] {
+  return state.exchangeRecords
+}
+
 export function resetDemoData() {
   state = {
     cases: SEED_CASES,
     profile: DEMO_PROFILE,
     vitalsHistory: seedVitalsHistory(),
     learningLog: [],
+    exchangeRecords: [],
   }
   resetCorrections()
   emit()

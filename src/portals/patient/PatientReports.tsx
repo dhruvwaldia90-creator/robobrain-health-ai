@@ -80,6 +80,15 @@ export function PatientReports() {
         <div>
           {selected?.report ? (
             <>
+              <div className="mb-4 flex justify-end">
+                <Link
+                  to="/app/patient/exchange"
+                  state={{ caseId: selected.id }}
+                  className="btn-outline"
+                >
+                  <Icon name="Share2" size={16} /> Share decision record
+                </Link>
+              </div>
               {selected.doctorNote && (
                 <Card className="mb-5 border-emerald-200 bg-emerald-50/60">
                   <div className="flex items-start gap-3">

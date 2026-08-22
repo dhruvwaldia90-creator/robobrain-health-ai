@@ -301,3 +301,43 @@ export interface Case {
 
 /** Inference provider identifier — local deterministic engine or an LLM backend. */
 export type ProviderId = 'local' | 'llm'
+
+/** Clean Data Exchange — standardized, portable decision-support record. */
+export type ExchangeUrgency = 'routine' | 'soon' | 'urgent' | 'emergency'
+
+/** The AI recommends; the doctor decides. Pending until a clinician acts. */
+export type ExchangeReviewStatus = 'pending' | 'accepted' | 'overridden'
+
+export interface DecisionExchangeRecord {
+  schemaVersion: number
+  recordId: string
+  patientId: string
+  caseId?: string
+  createdAt: string
+  input: {
+    vitals?: Vitals
+    symptoms?: string[]
+    observations?: string[]
+  }
+  assessment: {
+    riskLevel: Severity
+    findings: string[]
+    /** 0–100, consistent with the app's confidence scale */
+    confidence: number
+  }
+  recommendation: {
+    action: string
+    rationale: string
+    urgency: ExchangeUrgency
+  }
+  provenance: {
+    source: string
+    generatedAt: string
+  }
+  review: {
+    status: ExchangeReviewStatus
+    reviewer?: string
+    reviewedAt?: string
+    note?: string
+  }
+}

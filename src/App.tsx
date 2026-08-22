@@ -9,10 +9,12 @@ import { PatientDashboard } from '@/portals/patient/PatientDashboard'
 import { NewSubmission } from '@/portals/patient/NewSubmission'
 import { PatientReports } from '@/portals/patient/PatientReports'
 import { HealthProfile } from '@/portals/patient/HealthProfile'
+import { PatientDecisionExchange } from '@/portals/patient/DecisionExchange'
 
 import { DoctorDashboard } from '@/portals/doctor/DoctorDashboard'
 import { ReviewQueue } from '@/portals/doctor/ReviewQueue'
 import { DoctorAnalytics } from '@/portals/doctor/DoctorAnalytics'
+import { DecisionInbox } from '@/portals/doctor/DecisionInbox'
 
 import { PharmacistDashboard } from '@/portals/pharmacist/PharmacistDashboard'
 import { DrugIntelligence } from '@/portals/pharmacist/DrugIntelligence'
@@ -39,6 +41,7 @@ export default function App() {
         <Route index element={<PatientDashboard />} />
         <Route path="upload" element={<NewSubmission />} />
         <Route path="reports" element={<PatientReports />} />
+        <Route path="exchange" element={<PatientDecisionExchange />} />
         <Route path="profile" element={<HealthProfile />} />
       </Route>
 
@@ -52,6 +55,7 @@ export default function App() {
       >
         <Route index element={<DoctorDashboard />} />
         <Route path="queue" element={<ReviewQueue />} />
+        <Route path="inbox" element={<DecisionInbox />} />
         <Route path="analytics" element={<DoctorAnalytics />} />
       </Route>
 
