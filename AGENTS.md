@@ -11,6 +11,7 @@
 - `npm run build` — `tsc -b && vite build`
 - `npm run typecheck` — `tsc -b --noEmit`
 - `npm run lint` — eslint, `--max-warnings 0`
+- `npm test` — vitest run (tests live next to sources: `src/lib/ml/classifier.test.ts`, `src/lib/agents.test.ts`)
 
 ## Architecture
 - `src/lib/agents.ts` — agent mesh: symptom, drug, ADR, risk, researcher, referral + new agents (Critic, Safety, Uncertainty, Triage, Tool-Use). `generateReportStream()` is the streaming orchestrator yielding `ReasoningStep` per agent with an `onStep` callback.
@@ -47,3 +48,15 @@
 10. Autonomous outbreak/anomaly detection (researcher portal)
 11. What-if digital twin simulation (HealthProfile)
 12. LLM integration with graceful fallback to local reasoner
+
+## ML Classifier (added 2026-08)
+- `ml/train.py` trains a multinomial logistic regression on the Kaggle Disease Prediction dataset (vendored in `ml/data/`), exports weights to `ml/model.json`; copy to `src/lib/ml/model.json` after retraining.
+- `src/lib/ml/classifier.ts` — pure-TS inference (dot-product + softmax, parity with sklearn verified to 5e-7). `classifySymptomText()` maps free text to 132 binary features (name matching + SYNONYMS map) then top-k diseases with probabilities and category mapping. Feature extraction is negation-aware (NEGATIONS list checked in the 3 words before a match).
+- Symptom Agent merges ML top-3 (prob >= 5%) into findings unless a rule finding already covers the condition; confidences capped at 95.
+- Eval honesty: holdout is 100% (synthetic separable data) — quote the noisy-input metric (~93% top-1, 100% top-3) from `ml/eval_report.json` instead.
+
+## LLM Agent Augmentation (added 2026-08)
+- `generateReportStream` runs 7 concurrent LLM calls after the local pipeline: symptom-summary, critic, risk-insight, drug-advice, referral-note, uncertainty-data, report-narrative (all `llm*` helpers in `src/lib/agents.ts`).
+- Pattern per helper: early-return null unless `provider() === 'llm'` → `llmComplete` → `parseJson` → validate (shape + length, `cleanText` rejects JSON-shaped junk for plain-text fields) → null falls back to local output.
+- LLM drug advice is appended to `adherenceTips` with an "LLM pharmacist note:" prefix; referral note overrides `referral.reason`; uncertainty requests merge deduped (max 3); LLM narrative replaces the template narrative entirely.
+- No API key in sandbox: verified via mock `fetch` + `localStorage` shim in node (all 3 modes: mock-augmented, endpoint-down fallback, disabled baseline).
